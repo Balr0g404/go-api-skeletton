@@ -1,6 +1,13 @@
 package main
 
 import (
+	"context"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
 	_ "github.com/Balr0g404/go-api-skeletton/docs"
 	"github.com/Balr0g404/go-api-skeletton/internal/config"
 	"github.com/Balr0g404/go-api-skeletton/internal/database"
@@ -46,8 +53,28 @@ func main() {
 
 	r := router.Setup(jwtManager, authService, redisClient, cfg.IsProduction())
 
-	log.Info().Str("port", cfg.App.Port).Str("env", cfg.App.Env).Msg("starting server")
-	if err := r.Run(":" + cfg.App.Port); err != nil {
-		log.Fatal().Err(err).Msg("failed to start server")
+	srv := &http.Server{
+		Addr:    ":" + cfg.App.Port,
+		Handler: r,
 	}
+
+	go func() {
+		log.Info().Str("port", cfg.App.Port).Str("env", cfg.App.Env).Msg("starting server")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal().Err(err).Msg("failed to start server")
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Info().Msg("shutting down server")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatal().Err(err).Msg("forced shutdown")
+	}
+	log.Info().Msg("server stopped")
 }
