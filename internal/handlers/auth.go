@@ -3,11 +3,11 @@ package handlers
 import (
 	"strconv"
 
-	"github.com/gin-gonic/gin"
 	"github.com/Balr0g404/go-api-skeletton/internal/middleware"
 	"github.com/Balr0g404/go-api-skeletton/internal/models"
 	"github.com/Balr0g404/go-api-skeletton/internal/services"
 	"github.com/Balr0g404/go-api-skeletton/pkg/response"
+	"github.com/gin-gonic/gin"
 )
 
 type AuthHandler struct {

@@ -6,8 +6,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/Balr0g404/go-api-skeletton/internal/config"
+	"github.com/redis/go-redis/v9"
 )
 
 func NewRedis(cfg *config.RedisConfig) *redis.Client {

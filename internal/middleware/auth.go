@@ -3,11 +3,11 @@ package middleware
 import (
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/Balr0g404/go-api-skeletton/internal/models"
 	"github.com/Balr0g404/go-api-skeletton/internal/services"
 	"github.com/Balr0g404/go-api-skeletton/pkg/auth"
 	"github.com/Balr0g404/go-api-skeletton/pkg/response"
+	"github.com/gin-gonic/gin"
 )
 
 func AuthRequired(jwtManager *auth.JWTManager, authService *services.AuthService) gin.HandlerFunc {

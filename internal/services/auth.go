@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/Balr0g404/go-api-skeletton/internal/models"
 	"github.com/Balr0g404/go-api-skeletton/pkg/auth"
+	"github.com/redis/go-redis/v9"
 )
 
 var (

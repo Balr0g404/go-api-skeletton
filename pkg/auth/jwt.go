@@ -15,9 +15,9 @@ const (
 )
 
 type Claims struct {
-	UserID uint   `json:"user_id"`
-	Email  string `json:"email"`
-	Role   string `json:"role"`
+	UserID uint      `json:"user_id"`
+	Email  string    `json:"email"`
+	Role   string    `json:"role"`
 	Type   TokenType `json:"type"`
 	jwt.RegisteredClaims
 }
@@ -28,15 +28,15 @@ type TokenPair struct {
 }
 
 type JWTManager struct {
-	secret               []byte
-	expirationHours      int
+	secret                 []byte
+	expirationHours        int
 	refreshExpirationHours int
 }
 
 func NewJWTManager(secret string, expHours, refreshExpHours int) *JWTManager {
 	return &JWTManager{
-		secret:               []byte(secret),
-		expirationHours:      expHours,
+		secret:                 []byte(secret),
+		expirationHours:        expHours,
 		refreshExpirationHours: refreshExpHours,
 	}
 }

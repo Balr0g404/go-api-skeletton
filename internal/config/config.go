@@ -34,8 +34,8 @@ type RedisConfig struct {
 }
 
 type JWTConfig struct {
-	Secret               string
-	ExpirationHours      int
+	Secret                 string
+	ExpirationHours        int
 	RefreshExpirationHours int
 }
 
@@ -60,8 +60,8 @@ func Load() *Config {
 			DB:       getEnvInt("REDIS_DB", 0),
 		},
 		JWT: JWTConfig{
-			Secret:               getEnv("JWT_SECRET", "default-secret-change-me"),
-			ExpirationHours:      getEnvInt("JWT_EXPIRATION_HOURS", 24),
+			Secret:                 getEnv("JWT_SECRET", "default-secret-change-me"),
+			ExpirationHours:        getEnvInt("JWT_EXPIRATION_HOURS", 24),
 			RefreshExpirationHours: getEnvInt("JWT_REFRESH_EXPIRATION_HOURS", 168),
 		},
 	}

@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Balr0g404/go-api-skeletton/internal/mocks"
 	"github.com/Balr0g404/go-api-skeletton/internal/middleware"
+	"github.com/Balr0g404/go-api-skeletton/internal/mocks"
 	"github.com/Balr0g404/go-api-skeletton/internal/models"
 	"github.com/Balr0g404/go-api-skeletton/internal/services"
 	"github.com/Balr0g404/go-api-skeletton/pkg/auth"
