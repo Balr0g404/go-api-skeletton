@@ -295,7 +295,6 @@ func (s *AuthService) isTokenBlacklisted(token string) bool {
 	return err == nil && result > 0
 }
 
-
 func (s *AuthService) ForgotPassword(input ForgotPasswordInput) error {
 	user, err := s.userRepo.FindByEmail(input.Email)
 	if err != nil {
