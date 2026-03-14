@@ -2,13 +2,19 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/Balr0g404/go-api-skeletton/internal/models"
 	"github.com/Balr0g404/go-api-skeletton/pkg/auth"
+	"github.com/Balr0g404/go-api-skeletton/pkg/email"
+	"github.com/Balr0g404/go-api-skeletton/pkg/filtering"
+	"github.com/Balr0g404/go-api-skeletton/pkg/pagination"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -18,20 +24,34 @@ var (
 	ErrAccountDisabled    = errors.New("account is disabled")
 	ErrUserNotFound       = errors.New("user not found")
 	ErrTokenBlacklisted   = errors.New("token has been revoked")
+	ErrInvalidResetToken  = errors.New("invalid or expired reset token")
 )
 
 type AuthService struct {
 	userRepo   UserRepository
 	jwtManager *auth.JWTManager
 	redis      *redis.Client
+	mailer     email.Sender
+	baseURL    string
 }
 
-func NewAuthService(userRepo UserRepository, jwtManager *auth.JWTManager, redis *redis.Client) *AuthService {
+func NewAuthService(userRepo UserRepository, jwtManager *auth.JWTManager, redis *redis.Client, mailer email.Sender, baseURL string) *AuthService {
 	return &AuthService{
 		userRepo:   userRepo,
 		jwtManager: jwtManager,
 		redis:      redis,
+		mailer:     mailer,
+		baseURL:    baseURL,
 	}
+}
+
+type ForgotPasswordInput struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+type ResetPasswordInput struct {
+	Token    string `json:"token" binding:"required"`
+	Password string `json:"password" binding:"required,min=8"`
 }
 
 type RegisterInput struct {
@@ -80,6 +100,8 @@ func (s *AuthService) Register(input RegisterInput) (*models.UserResponse, *auth
 	if err := s.userRepo.Create(user); err != nil {
 		return nil, nil, err
 	}
+
+	go func() { _ = s.mailer.Send(email.Welcome(user.FirstName, user.Email)) }()
 
 	tokens, err := s.jwtManager.GenerateTokenPair(user.ID, user.Email, string(user.Role))
 	if err != nil {
@@ -195,8 +217,8 @@ func (s *AuthService) ChangePassword(userID uint, input ChangePasswordInput) err
 	return s.userRepo.Update(user)
 }
 
-func (s *AuthService) ListUsers(page, pageSize int) ([]models.UserResponse, int64, error) {
-	users, total, err := s.userRepo.List(page, pageSize)
+func (s *AuthService) ListUsers(page, pageSize int, opts filtering.Options) ([]models.UserResponse, int64, error) {
+	users, total, err := s.userRepo.List(page, pageSize, opts)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -206,6 +228,39 @@ func (s *AuthService) ListUsers(page, pageSize int) ([]models.UserResponse, int6
 		responses[i] = u.ToResponse()
 	}
 	return responses, total, nil
+}
+
+// ListUsersCursor returns a page of users using cursor-based pagination.
+// cursorStr is an opaque base64-encoded ID; pass "" for the first page.
+// Returns: users, nextCursor (empty if no more pages), hasNext, error.
+func (s *AuthService) ListUsersCursor(cursorStr string, limit int, opts filtering.Options) ([]models.UserResponse, string, bool, error) {
+	afterID, err := pagination.DecodeCursor(cursorStr)
+	if err != nil {
+		return nil, "", false, err
+	}
+
+	// Fetch one extra to detect whether a next page exists.
+	users, err := s.userRepo.ListCursor(afterID, limit+1, opts)
+	if err != nil {
+		return nil, "", false, err
+	}
+
+	hasNext := len(users) > limit
+	if hasNext {
+		users = users[:limit]
+	}
+
+	responses := make([]models.UserResponse, len(users))
+	for i, u := range users {
+		responses[i] = u.ToResponse()
+	}
+
+	var nextCursor string
+	if hasNext {
+		nextCursor = pagination.EncodeCursor(users[len(users)-1].ID)
+	}
+
+	return responses, nextCursor, hasNext, nil
 }
 
 func (s *AuthService) SetUserRole(userID uint, role models.Role) (*models.UserResponse, error) {
@@ -256,4 +311,55 @@ func (s *AuthService) GetCachedUser(userID uint) *models.UserResponse {
 		return nil
 	}
 	return &user
+}
+
+func (s *AuthService) ForgotPassword(input ForgotPasswordInput) error {
+	user, err := s.userRepo.FindByEmail(input.Email)
+	if err != nil {
+		// Security: don't reveal whether the email is registered
+		return nil
+	}
+
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return err
+	}
+	token := hex.EncodeToString(tokenBytes)
+
+	key := fmt.Sprintf("pwd_reset:%s", token)
+	s.redis.Set(context.Background(), key, strconv.FormatUint(uint64(user.ID), 10), time.Hour)
+
+	resetURL := fmt.Sprintf("%s/reset-password?token=%s", s.baseURL, token)
+	go func() { _ = s.mailer.Send(email.PasswordReset(user.FirstName, resetURL)) }()
+
+	return nil
+}
+
+func (s *AuthService) ResetPassword(input ResetPasswordInput) error {
+	key := fmt.Sprintf("pwd_reset:%s", input.Token)
+	val, err := s.redis.Get(context.Background(), key).Result()
+	if err != nil {
+		return ErrInvalidResetToken
+	}
+
+	userID64, err := strconv.ParseUint(val, 10, 64)
+	if err != nil {
+		return ErrInvalidResetToken
+	}
+
+	user, err := s.userRepo.FindByID(uint(userID64))
+	if err != nil {
+		return ErrInvalidResetToken
+	}
+
+	if err := user.SetPassword(input.Password); err != nil {
+		return err
+	}
+
+	if err := s.userRepo.Update(user); err != nil {
+		return err
+	}
+
+	s.redis.Del(context.Background(), key)
+	return nil
 }

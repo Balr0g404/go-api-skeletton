@@ -33,6 +33,19 @@ definitions:
       tokens:
         $ref: '#/definitions/auth.TokenPair'
     type: object
+  handlers.UserCursorListResponse:
+    properties:
+      has_next:
+        type: boolean
+      limit:
+        type: integer
+      next_cursor:
+        type: string
+      users:
+        items:
+          $ref: '#/definitions/models.UserResponse'
+        type: array
+    type: object
   handlers.UserListResponse:
     properties:
       page:
@@ -94,6 +107,13 @@ definitions:
     - current_password
     - new_password
     type: object
+  services.ForgotPasswordInput:
+    properties:
+      email:
+        type: string
+    required:
+    - email
+    type: object
   services.LoginInput:
     properties:
       email:
@@ -135,6 +155,17 @@ definitions:
     - last_name
     - password
     type: object
+  services.ResetPasswordInput:
+    properties:
+      password:
+        minLength: 8
+        type: string
+      token:
+        type: string
+    required:
+    - password
+    - token
+    type: object
   services.UpdateProfileInput:
     properties:
       first_name:
@@ -165,6 +196,20 @@ paths:
         in: query
         name: page_size
         type: integer
+      - default: id
+        description: Sort field (id, created_at, email, first_name, last_name, role)
+        in: query
+        name: sort
+        type: string
+      - default: asc
+        description: Sort direction (asc, desc)
+        in: query
+        name: order
+        type: string
+      - description: 'Filters: filter[email], filter[role], filter[active]'
+        in: query
+        name: filter
+        type: object
       produces:
       - application/json
       responses:
@@ -248,6 +293,84 @@ paths:
       summary: Set user role
       tags:
       - Admin
+  /admin/users/cursor:
+    get:
+      description: Cursor-based paginated list of users (admin only). Pass next_cursor
+        from the previous response as cursor.
+      parameters:
+      - description: Opaque cursor from previous response
+        in: query
+        name: cursor
+        type: string
+      - default: 20
+        description: Items per page (1-100)
+        in: query
+        name: limit
+        type: integer
+      - description: 'Filters: filter[email], filter[role], filter[active]'
+        in: query
+        name: filter
+        type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/response.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/handlers.UserCursorListResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      security:
+      - BearerAuth: []
+      summary: List users with cursor pagination
+      tags:
+      - Admin
+  /auth/forgot-password:
+    post:
+      consumes:
+      - application/json
+      description: Send a password reset email. Always returns 200 for security (email
+        existence not disclosed).
+      parameters:
+      - description: Email address
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/services.ForgotPasswordInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Request password reset
+      tags:
+      - Auth
   /auth/login:
     post:
       consumes:
@@ -390,6 +513,32 @@ paths:
           schema:
             $ref: '#/definitions/response.APIResponse'
       summary: Register a new user
+      tags:
+      - Auth
+  /auth/reset-password:
+    post:
+      consumes:
+      - application/json
+      description: Reset password using a token received by email
+      parameters:
+      - description: Reset token and new password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/services.ResetPasswordInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/response.APIResponse'
+      summary: Reset password
       tags:
       - Auth
   /profile:

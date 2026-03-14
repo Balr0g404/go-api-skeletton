@@ -16,6 +16,7 @@ import (
 	"github.com/Balr0g404/go-api-skeletton/internal/models"
 	"github.com/Balr0g404/go-api-skeletton/internal/services"
 	"github.com/Balr0g404/go-api-skeletton/pkg/auth"
+	"github.com/stretchr/testify/mock"
 )
 
 type authTestSetup struct {
@@ -35,7 +36,9 @@ func newAuthTestSetup(t *testing.T) authTestSetup {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	jwtMgr := auth.NewJWTManager("test-secret", 1, 24)
 	repo := &mocks.UserRepository{}
-	svc := services.NewAuthService(repo, jwtMgr, client)
+	mailer := &mocks.EmailSender{}
+	mailer.On("Send", mock.Anything).Return(nil)
+	svc := services.NewAuthService(repo, jwtMgr, client, mailer, "http://localhost:8080")
 
 	r := gin.New()
 	r.Use(middleware.AuthRequired(jwtMgr, svc))

@@ -3,6 +3,7 @@ package services_test
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -15,6 +16,7 @@ import (
 	"github.com/Balr0g404/go-api-skeletton/internal/services"
 	"github.com/Balr0g404/go-api-skeletton/internal/testutil"
 	"github.com/Balr0g404/go-api-skeletton/pkg/auth"
+	"github.com/Balr0g404/go-api-skeletton/pkg/filtering"
 )
 
 func newTestService(t *testing.T, repo *mocks.UserRepository) (*services.AuthService, *miniredis.Miniredis) {
@@ -25,7 +27,9 @@ func newTestService(t *testing.T, repo *mocks.UserRepository) (*services.AuthSer
 
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	jwt := auth.NewJWTManager("test-secret", 1, 24)
-	return services.NewAuthService(repo, jwt, client), mr
+	mailer := &mocks.EmailSender{}
+	mailer.On("Send", mock.Anything).Return(nil)
+	return services.NewAuthService(repo, jwt, client, mailer, "http://localhost:8080"), mr
 }
 
 func TestRegister_Success(t *testing.T) {
@@ -287,9 +291,9 @@ func TestListUsers_Success(t *testing.T) {
 		*testutil.NewUser(t, testutil.UniqueEmail("user2")),
 	}
 
-	repo.On("List", 1, 20).Return(users, int64(2), nil)
+	repo.On("List", 1, 20, mock.Anything).Return(users, int64(2), nil)
 
-	result, total, err := svc.ListUsers(1, 20)
+	result, total, err := svc.ListUsers(1, 20, filtering.Options{})
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), total)
@@ -324,4 +328,227 @@ func TestSetUserRole_NotFound(t *testing.T) {
 
 	assert.ErrorIs(t, err, services.ErrUserNotFound)
 	repo.AssertExpectations(t)
+}
+
+// ─── ListUsersCursor ──────────────────────────────────────────────────────────
+
+func TestListUsersCursor_FirstPage(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, _ := newTestService(t, repo)
+
+	users := []models.User{
+		{ID: 1, Email: "a@example.com", Role: models.RoleUser, Active: true},
+		{ID: 2, Email: "b@example.com", Role: models.RoleUser, Active: true},
+	}
+	// limit=2, service fetches limit+1=3; returns 2 → no next page
+	repo.On("ListCursor", uint(0), 3, mock.Anything).Return(users, nil)
+
+	result, nextCursor, hasNext, err := svc.ListUsersCursor("", 2, filtering.Options{})
+
+	require.NoError(t, err)
+	assert.Len(t, result, 2)
+	assert.False(t, hasNext)
+	assert.Empty(t, nextCursor)
+	repo.AssertExpectations(t)
+}
+
+func TestListUsersCursor_HasNextPage(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, _ := newTestService(t, repo)
+
+	// limit=2, returns 3 → has_next=true, only first 2 returned
+	users := []models.User{
+		{ID: 1, Email: "a@example.com", Role: models.RoleUser, Active: true},
+		{ID: 2, Email: "b@example.com", Role: models.RoleUser, Active: true},
+		{ID: 3, Email: "c@example.com", Role: models.RoleUser, Active: true},
+	}
+	repo.On("ListCursor", uint(0), 3, mock.Anything).Return(users, nil)
+
+	result, nextCursor, hasNext, err := svc.ListUsersCursor("", 2, filtering.Options{})
+
+	require.NoError(t, err)
+	assert.Len(t, result, 2)
+	assert.True(t, hasNext)
+	assert.NotEmpty(t, nextCursor)
+	// next cursor should encode ID 2 (last item returned)
+	assert.Equal(t, uint(2), result[len(result)-1].ID)
+}
+
+func TestListUsersCursor_InvalidCursor(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, _ := newTestService(t, repo)
+
+	_, _, _, err := svc.ListUsersCursor("!!!invalid!!!", 20, filtering.Options{})
+
+	assert.Error(t, err)
+	repo.AssertNotCalled(t, "ListCursor")
+}
+
+func TestListUsersCursor_EmptyResult(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, _ := newTestService(t, repo)
+
+	repo.On("ListCursor", uint(0), 21, mock.Anything).Return([]models.User{}, nil)
+
+	result, nextCursor, hasNext, err := svc.ListUsersCursor("", 20, filtering.Options{})
+
+	require.NoError(t, err)
+	assert.Empty(t, result)
+	assert.False(t, hasNext)
+	assert.Empty(t, nextCursor)
+}
+
+// ─── ListUsers with filtering ────────────────────────────────────────────────
+
+func TestListUsers_WithFilter(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, _ := newTestService(t, repo)
+
+	opts := filtering.Options{
+		Sort:    "email",
+		Order:   filtering.OrderAsc,
+		Filters: map[string]string{"role": "admin"},
+	}
+
+	users := []models.User{
+		{ID: 1, Email: "admin@example.com", Role: models.RoleAdmin, Active: true},
+	}
+	repo.On("List", 1, 20, opts).Return(users, int64(1), nil)
+
+	result, total, err := svc.ListUsers(1, 20, opts)
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), total)
+	assert.Len(t, result, 1)
+	assert.Equal(t, models.RoleAdmin, result[0].Role)
+	repo.AssertExpectations(t)
+}
+
+func TestListUsersCursor_WithFilter(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, _ := newTestService(t, repo)
+
+	opts := filtering.Options{
+		Sort:    "id",
+		Order:   filtering.OrderAsc,
+		Filters: map[string]string{"active": "true"},
+	}
+
+	users := []models.User{
+		{ID: 3, Email: "active@example.com", Role: models.RoleUser, Active: true},
+	}
+	repo.On("ListCursor", uint(0), 21, opts).Return(users, nil)
+
+	result, _, hasNext, err := svc.ListUsersCursor("", 20, opts)
+
+	require.NoError(t, err)
+	assert.False(t, hasNext)
+	assert.Len(t, result, 1)
+	repo.AssertExpectations(t)
+}
+
+// ─── CacheUser / GetCachedUser ────────────────────────────────────────────────
+
+func TestCacheUser_GetCachedUser_Hit(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, _ := newTestService(t, repo)
+
+	u := &models.UserResponse{
+		ID:        42,
+		Email:     "cached@example.com",
+		FirstName: "Cache",
+		LastName:  "Test",
+		Role:      models.RoleUser,
+		Active:    true,
+	}
+
+	svc.CacheUser(u, 60*time.Second)
+
+	cached := svc.GetCachedUser(42)
+	require.NotNil(t, cached)
+	assert.Equal(t, u.ID, cached.ID)
+	assert.Equal(t, u.Email, cached.Email)
+}
+
+func TestGetCachedUser_Miss(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, _ := newTestService(t, repo)
+
+	assert.Nil(t, svc.GetCachedUser(999))
+}
+
+func TestCacheUser_TTLExpires(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, mr := newTestService(t, repo)
+
+	u := &models.UserResponse{ID: 5, Email: "ttl@example.com"}
+	svc.CacheUser(u, time.Second)
+
+	mr.FastForward(2 * time.Second)
+
+	assert.Nil(t, svc.GetCachedUser(5))
+}
+
+// ─── ForgotPassword / ResetPassword ──────────────────────────────────────────
+
+func TestForgotPassword_UserExists(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, mr := newTestService(t, repo)
+
+	u := testutil.NewUser(t, testutil.UniqueEmail("reset"))
+	u.ID = 5
+	repo.On("FindByEmail", u.Email).Return(u, nil)
+
+	err := svc.ForgotPassword(services.ForgotPasswordInput{Email: u.Email})
+	assert.NoError(t, err)
+	// token should be stored in Redis
+	keys := mr.Keys()
+	found := false
+	for _, k := range keys {
+		if len(k) > 9 && k[:9] == "pwd_reset" {
+			found = true
+		}
+	}
+	assert.True(t, found, "expected pwd_reset key in Redis")
+	repo.AssertExpectations(t)
+}
+
+func TestForgotPassword_UserNotFound(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, _ := newTestService(t, repo)
+
+	repo.On("FindByEmail", "ghost@example.com").Return(nil, errors.New("not found"))
+
+	err := svc.ForgotPassword(services.ForgotPasswordInput{Email: "ghost@example.com"})
+	assert.NoError(t, err) // always nil for security
+	repo.AssertExpectations(t)
+}
+
+func TestResetPassword_ValidToken(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, mr := newTestService(t, repo)
+
+	// Seed a reset token in miniredis
+	mr.Set("pwd_reset:validtoken123", "42")
+	mr.SetTTL("pwd_reset:validtoken123", 3600*time.Second)
+
+	u := testutil.NewUserWithPassword(t, "oldpass", testutil.UniqueEmail("someone"))
+	u.ID = 42
+	repo.On("FindByID", uint(42)).Return(u, nil)
+	repo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
+
+	err := svc.ResetPassword(services.ResetPasswordInput{Token: "validtoken123", Password: "newpassword123"})
+	assert.NoError(t, err)
+
+	// token should be deleted
+	assert.False(t, mr.Exists("pwd_reset:validtoken123"), "key should be gone")
+	repo.AssertExpectations(t)
+}
+
+func TestResetPassword_InvalidToken(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, _ := newTestService(t, repo)
+
+	err := svc.ResetPassword(services.ResetPasswordInput{Token: "badtoken", Password: "newpass123"})
+	assert.ErrorIs(t, err, services.ErrInvalidResetToken)
 }

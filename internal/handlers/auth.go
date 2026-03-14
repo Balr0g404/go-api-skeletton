@@ -6,9 +6,17 @@ import (
 	"github.com/Balr0g404/go-api-skeletton/internal/middleware"
 	"github.com/Balr0g404/go-api-skeletton/internal/models"
 	"github.com/Balr0g404/go-api-skeletton/internal/services"
+	"github.com/Balr0g404/go-api-skeletton/pkg/filtering"
 	"github.com/Balr0g404/go-api-skeletton/pkg/response"
 	"github.com/gin-gonic/gin"
 )
+
+// userListAllowed defines the sort/filter fields available on user list endpoints.
+var userListAllowed = filtering.Allowed{
+	Sort:        []string{"id", "created_at", "email", "first_name", "last_name", "role"},
+	Filter:      []string{"email", "role", "active"},
+	DefaultSort: "id",
+}
 
 type AuthHandler struct {
 	authService *services.AuthService
@@ -228,8 +236,11 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 // @Description  Paginated list of users (admin only)
 // @Tags         Admin
 // @Produce      json
-// @Param        page       query     int  false  "Page number"      default(1)
-// @Param        page_size  query     int  false  "Items per page"   default(20)
+// @Param        page       query     int     false  "Page number"                    default(1)
+// @Param        page_size  query     int     false  "Items per page"                 default(20)
+// @Param        sort       query     string  false  "Sort field (id, created_at, email, first_name, last_name, role)"  default(id)
+// @Param        order      query     string  false  "Sort direction (asc, desc)"     default(asc)
+// @Param        filter     query     object  false  "Filters: filter[email], filter[role], filter[active]"
 // @Success      200        {object}  response.APIResponse{data=UserListResponse}
 // @Failure      401        {object}  response.APIResponse
 // @Failure      403        {object}  response.APIResponse
@@ -247,7 +258,9 @@ func (h *AuthHandler) ListUsers(c *gin.Context) {
 		pageSize = 20
 	}
 
-	users, total, err := h.authService.ListUsers(page, pageSize)
+	opts := filtering.Parse(c, userListAllowed)
+
+	users, total, err := h.authService.ListUsers(page, pageSize, opts)
 	if err != nil {
 		response.InternalError(c)
 		return
@@ -259,6 +272,87 @@ func (h *AuthHandler) ListUsers(c *gin.Context) {
 		Page:     page,
 		PageSize: pageSize,
 	})
+}
+
+// ListUsersCursor godoc
+// @Summary      List users with cursor pagination
+// @Description  Cursor-based paginated list of users (admin only). Pass next_cursor from the previous response as cursor.
+// @Tags         Admin
+// @Produce      json
+// @Param        cursor  query     string  false  "Opaque cursor from previous response"
+// @Param        limit   query     int     false  "Items per page (1-100)"  default(20)
+// @Param        filter  query     object  false  "Filters: filter[email], filter[role], filter[active]"
+// @Success      200     {object}  response.APIResponse{data=UserCursorListResponse}
+// @Failure      400     {object}  response.APIResponse
+// @Failure      401     {object}  response.APIResponse
+// @Failure      403     {object}  response.APIResponse
+// @Failure      500     {object}  response.APIResponse
+// @Security     BearerAuth
+// @Router       /admin/users/cursor [get]
+func (h *AuthHandler) ListUsersCursor(c *gin.Context) {
+	cursor := c.Query("cursor")
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+
+	opts := filtering.Parse(c, userListAllowed)
+
+	users, nextCursor, hasNext, err := h.authService.ListUsersCursor(cursor, limit, opts)
+	if err != nil {
+		response.BadRequest(c, "invalid cursor")
+		return
+	}
+
+	response.OK(c, UserCursorListResponse{
+		Users:      users,
+		NextCursor: nextCursor,
+		HasNext:    hasNext,
+		Limit:      limit,
+	})
+}
+
+// ForgotPassword godoc
+// @Summary      Request password reset
+// @Description  Send a password reset email. Always returns 200 for security (email existence not disclosed).
+// @Tags         Auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body      services.ForgotPasswordInput  true  "Email address"
+// @Success      200   {object}  response.APIResponse
+// @Failure      400   {object}  response.APIResponse
+// @Router       /auth/forgot-password [post]
+func (h *AuthHandler) ForgotPassword(c *gin.Context) {
+	var input services.ForgotPasswordInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	_ = h.authService.ForgotPassword(input) // always 200
+	response.Message(c, "if this email is registered, a reset link has been sent")
+}
+
+// ResetPassword godoc
+// @Summary      Reset password
+// @Description  Reset password using a token received by email
+// @Tags         Auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body      services.ResetPasswordInput  true  "Reset token and new password"
+// @Success      200   {object}  response.APIResponse
+// @Failure      400   {object}  response.APIResponse
+// @Router       /auth/reset-password [post]
+func (h *AuthHandler) ResetPassword(c *gin.Context) {
+	var input services.ResetPasswordInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	if err := h.authService.ResetPassword(input); err != nil {
+		response.BadRequest(c, "invalid or expired reset token")
+		return
+	}
+	response.Message(c, "password reset successfully")
 }
 
 // SetUserRole godoc

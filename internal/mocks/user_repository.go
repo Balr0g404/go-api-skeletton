@@ -2,6 +2,7 @@ package mocks
 
 import (
 	"github.com/Balr0g404/go-api-skeletton/internal/models"
+	"github.com/Balr0g404/go-api-skeletton/pkg/filtering"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -40,9 +41,14 @@ func (m *UserRepository) Delete(id uint) error {
 	return args.Error(0)
 }
 
-func (m *UserRepository) List(page, pageSize int) ([]models.User, int64, error) {
-	args := m.Called(page, pageSize)
+func (m *UserRepository) List(page, pageSize int, opts filtering.Options) ([]models.User, int64, error) {
+	args := m.Called(page, pageSize, opts)
 	return args.Get(0).([]models.User), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *UserRepository) ListCursor(afterID uint, limit int, opts filtering.Options) ([]models.User, error) {
+	args := m.Called(afterID, limit, opts)
+	return args.Get(0).([]models.User), args.Error(1)
 }
 
 func (m *UserRepository) ExistsByEmail(email string) bool {

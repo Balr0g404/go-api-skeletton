@@ -20,6 +20,7 @@ func Setup(
 	authService *services.AuthService,
 	redisClient *redis.Client,
 	isProd bool,
+	allowedOrigins []string,
 ) *gin.Engine {
 	if isProd {
 		gin.SetMode(gin.ReleaseMode)
@@ -27,9 +28,11 @@ func Setup(
 
 	r := gin.New()
 	r.Use(middleware.RequestID())
+	r.Use(middleware.Recovery())
 	r.Use(middleware.Logger())
-	r.Use(gin.Recovery())
-	r.Use(middleware.CORS())
+	r.Use(middleware.Timeout(30 * time.Second))
+	r.Use(middleware.SecurityHeaders(isProd))
+	r.Use(middleware.CORS(allowedOrigins))
 	r.Use(middleware.RateLimit(redisClient, 100, time.Minute))
 
 	authHandler := handlers.NewAuthHandler(authService)
@@ -54,6 +57,8 @@ func Setup(
 			public.POST("/register", authHandler.Register)
 			public.POST("/login", authHandler.Login)
 			public.POST("/refresh", authHandler.RefreshToken)
+			public.POST("/forgot-password", authHandler.ForgotPassword)
+			public.POST("/reset-password", authHandler.ResetPassword)
 		}
 
 		protected := api.Group("")
@@ -70,6 +75,7 @@ func Setup(
 		admin.Use(middleware.RoleRequired(models.RoleAdmin))
 		{
 			admin.GET("/users", authHandler.ListUsers)
+			admin.GET("/users/cursor", authHandler.ListUsersCursor)
 			admin.PUT("/users/:id/role", authHandler.SetUserRole)
 		}
 	}

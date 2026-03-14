@@ -26,7 +26,7 @@ Template de démarrage pour API REST avec Go, Gin, GORM, PostgreSQL, Redis.
 │   ├── config/          → Configuration (env vars)
 │   ├── database/        → Connexions PostgreSQL & Redis, RunMigrations
 │   ├── handlers/        → Contrôleurs HTTP
-│   ├── middleware/      → Auth JWT, CORS, Rate Limiting, Request ID, Logger
+│   ├── middleware/      → Auth JWT, CORS, Security, Timeout, Recovery, Rate Limiting, Request ID, Logger
 │   ├── mocks/           → Mocks testify/mock générés manuellement
 │   ├── models/          → Modèles GORM
 │   ├── repositories/    → Couche d'accès aux données
@@ -36,7 +36,10 @@ Template de démarrage pour API REST avec Go, Gin, GORM, PostgreSQL, Redis.
 ├── migrations/          → Fichiers SQL versionnés (golang-migrate)
 ├── pkg/
 │   ├── auth/            → JWT (génération, validation)
+│   ├── email/           → Abstraction d'envoi d'emails (SMTP, Resend, noop) + templates
+│   ├── filtering/       → Parse et validation de ?sort=, ?order=, ?filter[field]=value
 │   ├── logger/          → Initialisation zerolog (JSON prod / pretty dev)
+│   ├── pagination/      → Encode/decode cursor (base64url) pour la pagination curseur
 │   └── response/        → Helpers de réponse API uniformes
 ├── docker/              → Dockerfiles dev & prod
 ├── docker-compose.dev.yml
@@ -97,6 +100,32 @@ INF request method=GET path=/health status=200 latency=1ms ip=127.0.0.1 request_
 
 Chaque requête reçoit un `X-Request-ID` UUID (généré si absent du header entrant) propagé dans les logs et les réponses. Le niveau de log est automatiquement adapté au status HTTP : `info` (2xx), `warn` (4xx), `error` (5xx).
 
+## Middleware chain
+
+Chaque requête traverse les middlewares dans cet ordre :
+
+| # | Middleware | Rôle |
+|---|-----------|------|
+| 1 | **RequestID** | Génère ou propage `X-Request-ID` (UUID) |
+| 2 | **Recovery** | Capture les panics, logue avec request_id + stack trace, retourne 500 JSON |
+| 3 | **Logger** | Log structuré zerolog après la réponse (method, path, status, latency) |
+| 4 | **Timeout** | Annule la requête après 30s, retourne 503 JSON |
+| 5 | **SecurityHeaders** | X-Frame-Options, X-Content-Type-Options, Referrer-Policy, HSTS (prod) |
+| 6 | **CORS** | Origins configurables via `CORS_ALLOWED_ORIGINS`, matching exact en prod |
+| 7 | **RateLimit** | 100 req/min par IP via Redis, headers `X-RateLimit-*` |
+| 8 | **AuthRequired** | Validation JWT, vérification blacklist Redis (routes protégées) |
+| 9 | **RoleRequired** | Vérification du rôle dans le contexte (routes admin) |
+
+## Linter
+
+```bash
+make lint
+```
+
+La configuration [`.golangci.yml`](.golangci.yml) active : `errcheck`, `govet`, `staticcheck`, `gofmt`, `goimports`, `revive`, `gosec`, `misspell`, `unconvert`, `unparam`, `copylock`, `exhaustive`, `noctx`, `bodyclose`.
+
+> Requiert [`golangci-lint`](https://golangci-lint.run/usage/install/) : `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`
+
 ## Tests
 
 ```bash
@@ -132,12 +161,14 @@ Les annotations Swagger se trouvent sur les handlers dans `internal/handlers/`.
 
 ### Publics
 
-| Méthode | Route                   | Description         |
-|---------|-------------------------|---------------------|
-| GET     | `/health`               | Health check        |
-| POST    | `/api/v1/auth/register` | Inscription         |
-| POST    | `/api/v1/auth/login`    | Connexion           |
-| POST    | `/api/v1/auth/refresh`  | Rafraîchir le token |
+| Méthode | Route                              | Description                   |
+|---------|------------------------------------|-------------------------------|
+| GET     | `/health`                          | Health check                  |
+| POST    | `/api/v1/auth/register`            | Inscription                   |
+| POST    | `/api/v1/auth/login`               | Connexion                     |
+| POST    | `/api/v1/auth/refresh`             | Rafraîchir le token           |
+| POST    | `/api/v1/auth/forgot-password`     | Demander un lien de reset     |
+| POST    | `/api/v1/auth/reset-password`      | Réinitialiser le mot de passe |
 
 ### Authentifiés
 
@@ -150,10 +181,128 @@ Les annotations Swagger se trouvent sur les handlers dans `internal/handlers/`.
 
 ### Admin uniquement
 
-| Méthode | Route                          | Description             |
-|---------|--------------------------------|-------------------------|
-| GET     | `/api/v1/admin/users`          | Lister les utilisateurs |
-| PUT     | `/api/v1/admin/users/:id/role` | Changer le rôle         |
+| Méthode | Route                               | Description                      |
+|---------|-------------------------------------|----------------------------------|
+| GET     | `/api/v1/admin/users`               | Lister les utilisateurs (offset) |
+| GET     | `/api/v1/admin/users/cursor`        | Lister les utilisateurs (cursor) |
+| PUT     | `/api/v1/admin/users/:id/role`      | Changer le rôle                  |
+
+## Pagination curseur
+
+L'endpoint `/api/v1/admin/users/cursor` implémente une pagination par curseur, plus performante que l'offset sur les grandes tables (pas de `OFFSET` SQL, index sur l'ID).
+
+**Paramètres** : `cursor` (optionnel, opaque base64url), `limit` (1–100, défaut 20).
+
+```bash
+# Première page
+curl http://localhost:8080/api/v1/admin/users/cursor?limit=20 \
+  -H "Authorization: Bearer <token>"
+
+# Page suivante (next_cursor de la réponse précédente)
+curl "http://localhost:8080/api/v1/admin/users/cursor?cursor=<next_cursor>&limit=20" \
+  -H "Authorization: Bearer <token>"
+```
+
+**Réponse** :
+```json
+{
+  "success": true,
+  "data": {
+    "users": [...],
+    "next_cursor": "MTIz",
+    "has_next": true,
+    "limit": 20
+  }
+}
+```
+
+Quand `has_next` est `false`, le champ `next_cursor` est absent : c'est la dernière page.
+
+## Service email
+
+L'envoi d'emails est géré par `pkg/email/` avec une interface `Sender` commune à tous les providers.
+
+### Providers disponibles
+
+| `EMAIL_PROVIDER` | Description |
+|-----------------|-------------|
+| `noop` (défaut) | Discarde silencieusement les emails — idéal en développement |
+| `smtp` | Envoi via SMTP (STARTTLS sur 587, TLS sur 465) |
+| `resend` | Envoi via l'API REST [Resend](https://resend.com) |
+
+### Variables d'environnement
+
+```bash
+EMAIL_PROVIDER=smtp          # smtp | resend | noop
+EMAIL_FROM=noreply@example.com
+APP_BASE_URL=https://example.com   # utilisé dans les liens de reset
+
+# SMTP
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=user@example.com
+SMTP_PASSWORD=secret
+
+# Resend
+RESEND_API_KEY=re_xxxxxxxxxxxx
+```
+
+### Emails envoyés automatiquement
+
+| Déclencheur | Email |
+|-------------|-------|
+| `POST /auth/register` | Email de bienvenue |
+| `POST /auth/forgot-password` | Lien de réinitialisation (TTL 1h) |
+
+### Flux reset password
+
+```bash
+# 1. Demander le reset (toujours 200, ne révèle pas si l'email existe)
+curl -X POST http://localhost:8080/api/v1/auth/forgot-password \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com"}'
+
+# 2. Utiliser le token reçu par email
+curl -X POST http://localhost:8080/api/v1/auth/reset-password \
+  -H "Content-Type: application/json" \
+  -d '{"token":"<token>","password":"newpassword123"}'
+```
+
+## Filtrage et tri
+
+Les endpoints de liste (`/api/v1/admin/users` et `/api/v1/admin/users/cursor`) acceptent des paramètres de filtrage et de tri.
+
+### Paramètres
+
+| Paramètre | Valeurs | Défaut | Description |
+|-----------|---------|--------|-------------|
+| `sort` | `id`, `created_at`, `email`, `first_name`, `last_name`, `role` | `id` | Champ de tri |
+| `order` | `asc`, `desc` | `asc` | Sens du tri |
+| `filter[email]` | chaîne | — | Filtre exact sur l'email |
+| `filter[role]` | `user`, `admin` | — | Filtre exact sur le rôle |
+| `filter[active]` | `true`, `false` | — | Filtre sur le statut actif |
+
+Un champ `sort` inconnu est silencieusement ramené au défaut (`id`). Un filtre sur un champ non whitelisté est ignoré (protection SQL injection).
+
+### Exemples
+
+```bash
+# Trier par email décroissant
+curl "http://localhost:8080/api/v1/admin/users?sort=email&order=desc" \
+  -H "Authorization: Bearer <token>"
+
+# Filtrer les admins
+curl "http://localhost:8080/api/v1/admin/users?filter[role]=admin" \
+  -H "Authorization: Bearer <token>"
+
+# Combiner : admins actifs triés par date de création
+curl "http://localhost:8080/api/v1/admin/users?sort=created_at&order=desc&filter[role]=admin&filter[active]=true" \
+  -H "Authorization: Bearer <token>"
+
+# Pagination curseur avec filtre
+curl "http://localhost:8080/api/v1/admin/users/cursor?filter[role]=admin&limit=10" \
+  -H "Authorization: Bearer <token>"
+```
 
 ## Exemples d'utilisation
 
@@ -191,10 +340,18 @@ curl -X POST http://localhost:8080/api/v1/auth/refresh \
 - Blacklist de tokens via Redis (logout réel)
 - Autorisation par rôle (`user`, `admin`)
 - Rate limiting par IP via Redis
-- CORS configurable
+- CORS configurable via `CORS_ALLOWED_ORIGINS`
+- Headers de sécurité (X-Frame-Options, CSP, HSTS en prod)
+- Timeout par requête (30s) avec réponse structurée
+- Panic recovery avec log zerolog + request_id + stack trace
+- Config linter `.golangci.yml` prête à l'emploi
 - Migrations SQL versionnées avec rollback
 - Soft delete sur les utilisateurs
-- Pagination sur les listings
+- Pagination offset sur les listings
+- Pagination curseur (base64url) pour les grandes tables
+- Filtrage et tri générique (`?sort=`, `?order=`, `?filter[field]=value`) avec whitelist anti-injection
+- Service email avec provider configurable (SMTP, Resend, noop) et templates HTML
+- Reset password par email (token Redis TTL 1h, endpoint public sécurisé)
 - Réponses API uniformes
 - Logging structuré JSON (zerolog) avec Request ID tracé sur chaque log
 - Tests unitaires isolés (mocks + miniredis)

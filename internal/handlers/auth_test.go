@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -21,6 +22,8 @@ import (
 	"github.com/Balr0g404/go-api-skeletton/internal/models"
 	"github.com/Balr0g404/go-api-skeletton/internal/services"
 	"github.com/Balr0g404/go-api-skeletton/pkg/auth"
+	"github.com/Balr0g404/go-api-skeletton/pkg/filtering"
+	"github.com/Balr0g404/go-api-skeletton/pkg/pagination"
 	"github.com/Balr0g404/go-api-skeletton/pkg/response"
 )
 
@@ -46,7 +49,9 @@ func newHandlerSetup(t *testing.T) handlerSetup {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	jwtMgr := auth.NewJWTManager("test-secret", 1, 24)
 	repo := &mocks.UserRepository{}
-	svc := services.NewAuthService(repo, jwtMgr, client)
+	mailerMock := &mocks.EmailSender{}
+	mailerMock.On("Send", mock.Anything).Return(nil)
+	svc := services.NewAuthService(repo, jwtMgr, client, mailerMock, "http://localhost:8080")
 	h := handlers.NewAuthHandler(svc)
 
 	return handlerSetup{handler: h, repo: repo, jwtManager: jwtMgr, svc: svc, mr: mr}
@@ -463,7 +468,7 @@ func TestListUsersHandler_Success(t *testing.T) {
 		{ID: 1, Email: "a@example.com", Role: models.RoleUser, Active: true},
 		{ID: 2, Email: "b@example.com", Role: models.RoleAdmin, Active: true},
 	}
-	s.repo.On("List", 1, 20).Return(users, int64(2), nil)
+	s.repo.On("List", 1, 20, mock.Anything).Return(users, int64(2), nil)
 
 	r := gin.New()
 	r.GET("/admin/users", func(c *gin.Context) {
@@ -483,7 +488,7 @@ func TestListUsersHandler_Success(t *testing.T) {
 func TestListUsersHandler_DefaultPagination(t *testing.T) {
 	s := newHandlerSetup(t)
 
-	s.repo.On("List", 1, 20).Return([]models.User{}, int64(0), nil)
+	s.repo.On("List", 1, 20, mock.Anything).Return([]models.User{}, int64(0), nil)
 
 	r := gin.New()
 	r.GET("/admin/users", func(c *gin.Context) {
@@ -495,7 +500,7 @@ func TestListUsersHandler_DefaultPagination(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	s.repo.AssertCalled(t, "List", 1, 20)
+	s.repo.AssertCalled(t, "List", 1, 20, mock.Anything)
 }
 
 // ─── SetUserRole ──────────────────────────────────────────────────────────────
@@ -623,4 +628,307 @@ func TestMiddlewareHelpers_GetAccessToken(t *testing.T) {
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
 	r.ServeHTTP(w, req)
+}
+
+// ─── ListUsersCursor ──────────────────────────────────────────────────────────
+
+func TestListUsersCursorHandler_FirstPage(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	users := []models.User{
+		{ID: 1, Email: "a@example.com", Role: models.RoleUser, Active: true},
+		{ID: 2, Email: "b@example.com", Role: models.RoleUser, Active: true},
+	}
+	// limit=2, so repo is called with limit+1=3; returns 2 → no next page
+	s.repo.On("ListCursor", uint(0), 3, mock.Anything).Return(users, nil)
+
+	r := gin.New()
+	r.GET("/admin/users/cursor", s.handler.ListUsersCursor)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/admin/users/cursor?limit=2", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	resp := decodeResponse(t, w)
+	assert.True(t, resp.Success)
+
+	data := resp.Data.(map[string]interface{})
+	assert.Equal(t, false, data["has_next"])
+	assert.Nil(t, data["next_cursor"]) // omitempty: absent when empty
+}
+
+func TestListUsersCursorHandler_HasNextPage(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	// limit=2, repo receives limit+1=3; returns 3 items → has_next=true
+	users := []models.User{
+		{ID: 1, Email: "a@example.com", Role: models.RoleUser, Active: true},
+		{ID: 2, Email: "b@example.com", Role: models.RoleUser, Active: true},
+		{ID: 3, Email: "c@example.com", Role: models.RoleUser, Active: true},
+	}
+	s.repo.On("ListCursor", uint(0), 3, mock.Anything).Return(users, nil)
+
+	r := gin.New()
+	r.GET("/admin/users/cursor", s.handler.ListUsersCursor)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/admin/users/cursor?limit=2", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	resp := decodeResponse(t, w)
+	assert.True(t, resp.Success)
+
+	data := resp.Data.(map[string]interface{})
+	assert.Equal(t, true, data["has_next"])
+	assert.NotEmpty(t, data["next_cursor"])
+}
+
+func TestListUsersCursorHandler_WithCursor(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	cursor := pagination.EncodeCursor(5)
+	users := []models.User{
+		{ID: 6, Email: "f@example.com", Role: models.RoleUser, Active: true},
+	}
+	s.repo.On("ListCursor", uint(5), 21, mock.Anything).Return(users, nil)
+
+	r := gin.New()
+	r.GET("/admin/users/cursor", s.handler.ListUsersCursor)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("/admin/users/cursor?cursor=%s", cursor), nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	resp := decodeResponse(t, w)
+	assert.True(t, resp.Success)
+
+	data := resp.Data.(map[string]interface{})
+	assert.Equal(t, false, data["has_next"])
+}
+
+func TestListUsersCursorHandler_InvalidCursor(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	r := gin.New()
+	r.GET("/admin/users/cursor", s.handler.ListUsersCursor)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/admin/users/cursor?cursor=!!!invalid!!!", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestListUsersCursorHandler_DefaultLimit(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	// No limit param → default 20 → repo called with 21
+	s.repo.On("ListCursor", uint(0), 21, mock.Anything).Return([]models.User{}, nil)
+
+	r := gin.New()
+	r.GET("/admin/users/cursor", s.handler.ListUsersCursor)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/admin/users/cursor", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	s.repo.AssertCalled(t, "ListCursor", uint(0), 21, mock.Anything)
+}
+
+func TestListUsersCursorHandler_LimitClamped(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	// limit=0 → clamped to default 20
+	s.repo.On("ListCursor", uint(0), 21, mock.Anything).Return([]models.User{}, nil)
+
+	r := gin.New()
+	r.GET("/admin/users/cursor", s.handler.ListUsersCursor)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/admin/users/cursor?limit=0", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	s.repo.AssertCalled(t, "ListCursor", uint(0), 21, mock.Anything)
+}
+
+func TestListUsersCursorHandler_NextCursorIsDecodable(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	users := []models.User{
+		{ID: 10, Email: "x@example.com", Role: models.RoleUser, Active: true},
+		{ID: 11, Email: "y@example.com", Role: models.RoleUser, Active: true},
+	}
+	// limit=1, repo receives 2; returns 2 → has_next=true, next_cursor encodes ID 10
+	s.repo.On("ListCursor", uint(0), 2, mock.Anything).Return(users, nil)
+
+	r := gin.New()
+	r.GET("/admin/users/cursor", s.handler.ListUsersCursor)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/admin/users/cursor?limit=1", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	data := decodeResponse(t, w).Data.(map[string]interface{})
+
+	nextCursor := data["next_cursor"].(string)
+	decoded, err := pagination.DecodeCursor(nextCursor)
+	assert.NoError(t, err)
+	assert.Equal(t, uint(10), decoded)
+}
+
+// ─── Filtering / sorting on ListUsers ─────────────────────────────────────────
+
+func TestListUsersHandler_FilterByRole(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	users := []models.User{
+		{ID: 1, Email: "admin@example.com", Role: models.RoleAdmin, Active: true},
+	}
+	s.repo.On("List", 1, 20, filtering.Options{
+		Sort: "id", Order: filtering.OrderAsc,
+		Filters: map[string]string{"role": "admin"},
+	}).Return(users, int64(1), nil)
+
+	r := gin.New()
+	r.GET("/admin/users", s.handler.ListUsers)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/admin/users?filter[role]=admin", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	s.repo.AssertExpectations(t)
+}
+
+func TestListUsersHandler_SortByEmail(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	s.repo.On("List", 1, 20, filtering.Options{
+		Sort: "email", Order: filtering.OrderDesc,
+		Filters: map[string]string{},
+	}).Return([]models.User{}, int64(0), nil)
+
+	r := gin.New()
+	r.GET("/admin/users", s.handler.ListUsers)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/admin/users?sort=email&order=desc", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	s.repo.AssertExpectations(t)
+}
+
+func TestListUsersHandler_InvalidSortFallsBackToDefault(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	// unknown sort → falls back to "id"
+	s.repo.On("List", 1, 20, filtering.Options{
+		Sort: "id", Order: filtering.OrderAsc,
+		Filters: map[string]string{},
+	}).Return([]models.User{}, int64(0), nil)
+
+	r := gin.New()
+	r.GET("/admin/users", s.handler.ListUsers)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/admin/users?sort=injected_col", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	s.repo.AssertExpectations(t)
+}
+
+func TestListUsersHandler_UnknownFilterIgnored(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	// unknown filter key → silently dropped, no filter applied
+	s.repo.On("List", 1, 20, filtering.Options{
+		Sort: "id", Order: filtering.OrderAsc,
+		Filters: map[string]string{},
+	}).Return([]models.User{}, int64(0), nil)
+
+	r := gin.New()
+	r.GET("/admin/users", s.handler.ListUsers)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/admin/users?filter[unknown_col]=value", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	s.repo.AssertExpectations(t)
+}
+
+// ─── ForgotPassword / ResetPassword handlers ──────────────────────────────────
+
+func TestForgotPasswordHandler(t *testing.T) {
+	s := newHandlerSetup(t)
+	u := &models.User{Email: "forgot@example.com", FirstName: "Foo", LastName: "Bar"}
+	u.ID = 7
+	require.NoError(t, u.SetPassword("password123"))
+	s.repo.On("FindByEmail", "forgot@example.com").Return(u, nil)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/auth/forgot-password", jsonBody(t, map[string]string{"email": "forgot@example.com"}))
+	r.Header.Set("Content-Type", "application/json")
+	c, _ := gin.CreateTestContext(w)
+	c.Request = r
+	s.handler.ForgotPassword(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var body response.APIResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+	assert.True(t, body.Success)
+}
+
+func TestForgotPasswordHandler_InvalidBody(t *testing.T) {
+	s := newHandlerSetup(t)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/auth/forgot-password", jsonBody(t, map[string]string{"email": "not-an-email"}))
+	r.Header.Set("Content-Type", "application/json")
+	c, _ := gin.CreateTestContext(w)
+	c.Request = r
+	s.handler.ForgotPassword(c)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestResetPasswordHandler_InvalidToken(t *testing.T) {
+	s := newHandlerSetup(t)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/auth/reset-password", jsonBody(t, map[string]string{
+		"token": "badtoken", "password": "newpassword123",
+	}))
+	r.Header.Set("Content-Type", "application/json")
+	c, _ := gin.CreateTestContext(w)
+	c.Request = r
+	s.handler.ResetPassword(c)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestListUsersCursorHandler_FilterByActive(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	users := []models.User{
+		{ID: 1, Email: "active@example.com", Role: models.RoleUser, Active: true},
+	}
+	s.repo.On("ListCursor", uint(0), 21, filtering.Options{
+		Sort: "id", Order: filtering.OrderAsc,
+		Filters: map[string]string{"active": "true"},
+	}).Return(users, nil)
+
+	r := gin.New()
+	r.GET("/admin/users/cursor", s.handler.ListUsersCursor)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/admin/users/cursor?filter[active]=true", nil)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	s.repo.AssertExpectations(t)
 }

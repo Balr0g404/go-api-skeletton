@@ -1,4 +1,4 @@
-.PHONY: dev prod down logs build clean setup migrate-up migrate-down migrate-create test test-integration test-coverage swagger
+.PHONY: dev prod down logs build clean setup migrate-up migrate-down migrate-create test test-integration test-coverage swagger lint
 
 -include .env
 export
@@ -47,6 +47,9 @@ test-coverage:
 	go test ./... -coverprofile=coverage.out
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
+
+lint:
+	golangci-lint run ./...
 
 swagger:
 	swag init -g cmd/server/main.go -o docs

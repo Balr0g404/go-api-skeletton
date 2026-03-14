@@ -21,6 +21,13 @@ type UserListResponse struct {
 	PageSize int                   `json:"page_size"`
 }
 
+type UserCursorListResponse struct {
+	Users      []models.UserResponse `json:"users"`
+	NextCursor string                `json:"next_cursor,omitempty"`
+	HasNext    bool                  `json:"has_next"`
+	Limit      int                   `json:"limit"`
+}
+
 type LogoutInput struct {
 	RefreshToken string `json:"refresh_token"`
 }

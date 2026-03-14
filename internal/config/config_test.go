@@ -13,6 +13,7 @@ func TestLoad_Defaults(t *testing.T) {
 
 	assert.Equal(t, "development", cfg.App.Env)
 	assert.Equal(t, "8080", cfg.App.Port)
+	assert.Equal(t, []string{"*"}, cfg.App.CORSAllowedOrigins)
 	assert.Equal(t, "localhost", cfg.DB.Host)
 	assert.Equal(t, "5432", cfg.DB.Port)
 	assert.Equal(t, "appuser", cfg.DB.User)
@@ -84,4 +85,16 @@ func TestIsProduction_False(t *testing.T) {
 func TestIsProduction_Default(t *testing.T) {
 	cfg := config.Load()
 	assert.False(t, cfg.IsProduction())
+}
+
+func TestLoad_CORSAllowedOrigins_Single(t *testing.T) {
+	t.Setenv("CORS_ALLOWED_ORIGINS", "https://app.example.com")
+	cfg := config.Load()
+	assert.Equal(t, []string{"https://app.example.com"}, cfg.App.CORSAllowedOrigins)
+}
+
+func TestLoad_CORSAllowedOrigins_Multiple(t *testing.T) {
+	t.Setenv("CORS_ALLOWED_ORIGINS", "https://app.example.com,https://admin.example.com")
+	cfg := config.Load()
+	assert.Equal(t, []string{"https://app.example.com", "https://admin.example.com"}, cfg.App.CORSAllowedOrigins)
 }

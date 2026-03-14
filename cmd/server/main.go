@@ -15,6 +15,7 @@ import (
 	"github.com/Balr0g404/go-api-skeletton/internal/router"
 	"github.com/Balr0g404/go-api-skeletton/internal/services"
 	"github.com/Balr0g404/go-api-skeletton/pkg/auth"
+	"github.com/Balr0g404/go-api-skeletton/pkg/email"
 	"github.com/Balr0g404/go-api-skeletton/pkg/logger"
 	"github.com/rs/zerolog/log"
 )
@@ -48,10 +49,23 @@ func main() {
 		cfg.JWT.RefreshExpirationHours,
 	)
 
-	userRepo := repositories.NewUserRepository(db)
-	authService := services.NewAuthService(userRepo, jwtManager, redisClient)
+	mailer, err := email.New(email.Config{
+		Provider:     cfg.Email.Provider,
+		From:         cfg.Email.From,
+		SMTPHost:     cfg.Email.SMTPHost,
+		SMTPPort:     cfg.Email.SMTPPort,
+		SMTPUsername: cfg.Email.SMTPUsername,
+		SMTPPassword: cfg.Email.SMTPPassword,
+		ResendAPIKey: cfg.Email.ResendAPIKey,
+	})
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to initialize email provider")
+	}
 
-	r := router.Setup(jwtManager, authService, redisClient, cfg.IsProduction())
+	userRepo := repositories.NewUserRepository(db)
+	authService := services.NewAuthService(userRepo, jwtManager, redisClient, mailer, cfg.App.BaseURL)
+
+	r := router.Setup(jwtManager, authService, redisClient, cfg.IsProduction(), cfg.App.CORSAllowedOrigins)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.App.Port,

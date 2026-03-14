@@ -1,6 +1,9 @@
 package services
 
-import "github.com/Balr0g404/go-api-skeletton/internal/models"
+import (
+	"github.com/Balr0g404/go-api-skeletton/internal/models"
+	"github.com/Balr0g404/go-api-skeletton/pkg/filtering"
+)
 
 type UserRepository interface {
 	Create(user *models.User) error
@@ -8,6 +11,7 @@ type UserRepository interface {
 	FindByEmail(email string) (*models.User, error)
 	Update(user *models.User) error
 	Delete(id uint) error
-	List(page, pageSize int) ([]models.User, int64, error)
+	List(page, pageSize int, opts filtering.Options) ([]models.User, int64, error)
+	ListCursor(afterID uint, limit int, opts filtering.Options) ([]models.User, error)
 	ExistsByEmail(email string) bool
 }
