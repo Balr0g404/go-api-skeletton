@@ -76,6 +76,7 @@ func TestTimeout_ContextCancelledOnTimeout(t *testing.T) {
 		select {
 		case <-c.Request.Context().Done():
 			close(ctxDone)
+			return // don't write — middleware is responsible for the 503
 		case <-time.After(500 * time.Millisecond):
 		}
 		c.Status(http.StatusOK)

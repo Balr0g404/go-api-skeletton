@@ -1,10 +1,13 @@
-.PHONY: dev prod down logs build clean setup migrate-up migrate-down migrate-create scaffold test test-integration test-coverage swagger lint
+.PHONY: dev prod down logs build clean setup migrate-up migrate-down migrate-create scaffold test test-integration test-coverage swagger lint install-hooks
 
 -include .env
 export
 
 setup:
 	cp --update=none .env.example .env || true
+
+install-hooks:
+	@bash scripts/install-hooks.sh
 
 dev: setup
 	docker compose -f docker-compose.dev.yml up --build
@@ -37,7 +40,7 @@ build:
 	go build -o bin/server ./cmd/server
 
 test:
-	go test ./... -v
+	go test ./... -v && go clean -testcache
 
 test-integration:
 	TEST_DATABASE_URL="postgres://$(DB_USER):$(DB_PASSWORD)@localhost:$(DB_PORT)/$(DB_NAME)?sslmode=$(DB_SSLMODE)" \

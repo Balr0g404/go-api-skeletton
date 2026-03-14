@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# pre-commit — runs gofmt, go vet, and staticcheck on staged Go files.
+# Install via: bash scripts/install-hooks.sh
+
+set -euo pipefail
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+PASS=true
+
+# ── gofmt ─────────────────────────────────────────────────────────────────────
+UNFORMATTED=$(gofmt -l $STAGED 2>/dev/null)
+if [ -n "$UNFORMATTED" ]; then
+  echo "✗ gofmt: the following files need formatting:"
+  echo "$UNFORMATTED" | sed 's/^/    /'
+  echo "  Run: gofmt -w $UNFORMATTED"
+  PASS=false
+fi
+
+# ── go vet ────────────────────────────────────────────────────────────────────
+if ! go vet ./... 2>&1; then
+  echo "✗ go vet: issues found (see above)"
+  PASS=false
+fi
+
+# ── staticcheck ───────────────────────────────────────────────────────────────
+if command -v staticcheck &>/dev/null; then
+  if ! staticcheck ./... 2>&1; then
+    echo "✗ staticcheck: issues found (see above)"
+    PASS=false
+  fi
+else
+  echo "⚠ staticcheck not found, skipping (install: go install honnef.co/go/tools/cmd/staticcheck@latest)"
+fi
+
+if [ "$PASS" = false ]; then
+  echo ""
+  echo "Pre-commit checks failed. Fix the issues above and re-stage your changes."
+  exit 1
+fi

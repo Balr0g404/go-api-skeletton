@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ type Config struct {
 	Redis RedisConfig
 	JWT   JWTConfig
 	Email EmailConfig
+	Seed  SeedConfig
 }
 
 type AppConfig struct {
@@ -53,6 +55,14 @@ type JWTConfig struct {
 	RefreshExpirationHours int
 }
 
+type SeedConfig struct {
+	Enabled   bool
+	Email     string
+	Password  string
+	FirstName string
+	LastName  string
+}
+
 func Load() *Config {
 	return &Config{
 		App: AppConfig{
@@ -89,6 +99,13 @@ func Load() *Config {
 			SMTPPassword: getEnv("SMTP_PASSWORD", ""),
 			ResendAPIKey: getEnv("RESEND_API_KEY", ""),
 		},
+		Seed: SeedConfig{
+			Enabled:   getEnvBool("SEED_ADMIN", false),
+			Email:     getEnv("ADMIN_EMAIL", ""),
+			Password:  getEnv("ADMIN_PASSWORD", ""),
+			FirstName: getEnv("ADMIN_FIRST_NAME", "Admin"),
+			LastName:  getEnv("ADMIN_LAST_NAME", "Admin"),
+		},
 	}
 }
 
@@ -96,9 +113,44 @@ func (c *Config) IsProduction() bool {
 	return c.App.Env == "production"
 }
 
+// knownInsecureSecrets lists placeholder values that must never reach production.
+var knownInsecureSecrets = []string{
+	"",
+	"default-secret-change-me",
+	"change-me",
+	"secret",
+}
+
+// Validate checks that the configuration is safe to use in the current environment.
+// It returns an error describing the first violation found.
+func (c *Config) Validate() error {
+	if !c.IsProduction() {
+		return nil
+	}
+
+	secret := c.JWT.Secret
+	for _, bad := range knownInsecureSecrets {
+		if secret == bad {
+			return fmt.Errorf("JWT_SECRET must be set to a strong random value in production (current value is insecure)")
+		}
+	}
+	if len(secret) < 32 {
+		return fmt.Errorf("JWT_SECRET must be at least 32 characters in production (got %d)", len(secret))
+	}
+
+	return nil
+}
+
 func getEnv(key, fallback string) string {
 	if value, exists := os.LookupEnv(key); exists {
 		return value
+	}
+	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	if value, exists := os.LookupEnv(key); exists {
+		return value == "true" || value == "1"
 	}
 	return fallback
 }

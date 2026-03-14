@@ -73,6 +73,7 @@ func Timeout(duration time.Duration) gin.HandlerFunc {
 		case <-done:
 		case <-ctx.Done():
 			tw.sendTimeout()
+			<-done // wait for handler goroutine to exit before touching c
 			c.Abort()
 		}
 	}

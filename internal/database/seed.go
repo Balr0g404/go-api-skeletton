@@ -1,32 +1,51 @@
 package database
 
 import (
-	"log"
-
+	"github.com/Balr0g404/go-api-skeletton/internal/config"
 	"github.com/Balr0g404/go-api-skeletton/internal/models"
+	"github.com/rs/zerolog/log"
 	"gorm.io/gorm"
 )
 
-func Seed(db *gorm.DB) {
+// Seed creates the initial admin user when SEED_ADMIN=true.
+// It is intentionally disabled in production to avoid running
+// with known or default credentials.
+func Seed(db *gorm.DB, isProd bool, cfg config.SeedConfig) {
+	if !cfg.Enabled {
+		return
+	}
+
+	if isProd {
+		log.Warn().Msg("seed skipped: SEED_ADMIN=true is not allowed in production")
+		return
+	}
+
+	if cfg.Email == "" || cfg.Password == "" {
+		log.Fatal().Msg("seed requires ADMIN_EMAIL and ADMIN_PASSWORD to be set")
+	}
+
 	var count int64
-	db.Model(&models.User{}).Where("role = ?", models.RoleAdmin).Count(&count)
+	db.Model(&models.User{}).Where("email = ?", cfg.Email).Count(&count)
 	if count > 0 {
+		log.Info().Str("email", cfg.Email).Msg("seed skipped: admin user already exists")
 		return
 	}
 
 	admin := &models.User{
-		Email:     "admin@admin.com",
-		FirstName: "Admin",
-		LastName:  "Admin",
+		Email:     cfg.Email,
+		FirstName: cfg.FirstName,
+		LastName:  cfg.LastName,
 		Role:      models.RoleAdmin,
 		Active:    true,
 	}
-	admin.SetPassword("admin123")
 
-	if err := db.Create(admin).Error; err != nil {
-		log.Printf("failed to seed admin user: %v", err)
-		return
+	if err := admin.SetPassword(cfg.Password); err != nil {
+		log.Fatal().Err(err).Msg("failed to hash admin password")
 	}
 
-	log.Println("seeded default admin user (admin@admin.com / admin123)")
+	if err := db.Create(admin).Error; err != nil {
+		log.Fatal().Err(err).Msg("failed to seed admin user")
+	}
+
+	log.Info().Str("email", cfg.Email).Msg("admin user seeded")
 }

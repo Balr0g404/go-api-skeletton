@@ -98,3 +98,40 @@ func TestLoad_CORSAllowedOrigins_Multiple(t *testing.T) {
 	cfg := config.Load()
 	assert.Equal(t, []string{"https://app.example.com", "https://admin.example.com"}, cfg.App.CORSAllowedOrigins)
 }
+
+// ── Validate ─────────────────────────────────────────────────────────────────
+
+func TestValidate_DevAlwaysPasses(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("JWT_SECRET", "") // even empty is fine in dev
+	cfg := config.Load()
+	assert.NoError(t, cfg.Validate())
+}
+
+func TestValidate_ProdWithStrongSecret(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("JWT_SECRET", "a-very-strong-secret-that-is-long-enough-for-prod")
+	cfg := config.Load()
+	assert.NoError(t, cfg.Validate())
+}
+
+func TestValidate_ProdWithEmptySecret(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("JWT_SECRET", "")
+	cfg := config.Load()
+	assert.Error(t, cfg.Validate())
+}
+
+func TestValidate_ProdWithDefaultSecret(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("JWT_SECRET", "default-secret-change-me")
+	cfg := config.Load()
+	assert.Error(t, cfg.Validate())
+}
+
+func TestValidate_ProdWithShortSecret(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("JWT_SECRET", "tooshort")
+	cfg := config.Load()
+	assert.Error(t, cfg.Validate())
+}

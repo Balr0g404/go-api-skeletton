@@ -36,10 +36,14 @@ func main() {
 	cfg := config.Load()
 	logger.Init(cfg.IsProduction())
 
+	if err := cfg.Validate(); err != nil {
+		log.Fatal().Err(err).Msg("invalid configuration")
+	}
+
 	db := database.NewPostgres(&cfg.DB, cfg.IsProduction())
 
 	database.RunMigrations(&cfg.DB)
-	database.Seed(db)
+	database.Seed(db, cfg.IsProduction(), cfg.Seed)
 
 	redisClient := database.NewRedis(&cfg.Redis)
 
