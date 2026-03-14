@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+# Ensure go-installed tools are on PATH
+export PATH="$PATH:$(go env GOPATH)/bin"
+
 STAGED=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
 
 if [ -z "$STAGED" ]; then
