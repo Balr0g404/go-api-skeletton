@@ -36,11 +36,6 @@ func (m *UserRepository) Update(user *models.User) error {
 	return args.Error(0)
 }
 
-func (m *UserRepository) Delete(id uint) error {
-	args := m.Called(id)
-	return args.Error(0)
-}
-
 func (m *UserRepository) List(page, pageSize int, opts filtering.Options) ([]models.User, int64, error) {
 	args := m.Called(page, pageSize, opts)
 	return args.Get(0).([]models.User), args.Get(1).(int64), args.Error(2)

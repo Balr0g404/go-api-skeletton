@@ -447,48 +447,6 @@ func TestListUsersCursor_WithFilter(t *testing.T) {
 	repo.AssertExpectations(t)
 }
 
-// ─── CacheUser / GetCachedUser ────────────────────────────────────────────────
-
-func TestCacheUser_GetCachedUser_Hit(t *testing.T) {
-	repo := &mocks.UserRepository{}
-	svc, _ := newTestService(t, repo)
-
-	u := &models.UserResponse{
-		ID:        42,
-		Email:     "cached@example.com",
-		FirstName: "Cache",
-		LastName:  "Test",
-		Role:      models.RoleUser,
-		Active:    true,
-	}
-
-	svc.CacheUser(u, 60*time.Second)
-
-	cached := svc.GetCachedUser(42)
-	require.NotNil(t, cached)
-	assert.Equal(t, u.ID, cached.ID)
-	assert.Equal(t, u.Email, cached.Email)
-}
-
-func TestGetCachedUser_Miss(t *testing.T) {
-	repo := &mocks.UserRepository{}
-	svc, _ := newTestService(t, repo)
-
-	assert.Nil(t, svc.GetCachedUser(999))
-}
-
-func TestCacheUser_TTLExpires(t *testing.T) {
-	repo := &mocks.UserRepository{}
-	svc, mr := newTestService(t, repo)
-
-	u := &models.UserResponse{ID: 5, Email: "ttl@example.com"}
-	svc.CacheUser(u, time.Second)
-
-	mr.FastForward(2 * time.Second)
-
-	assert.Nil(t, svc.GetCachedUser(5))
-}
-
 // ─── ForgotPassword / ResetPassword ──────────────────────────────────────────
 
 func TestForgotPassword_UserExists(t *testing.T) {
@@ -551,4 +509,80 @@ func TestResetPassword_InvalidToken(t *testing.T) {
 
 	err := svc.ResetPassword(services.ResetPasswordInput{Token: "badtoken", Password: "newpass123"})
 	assert.ErrorIs(t, err, services.ErrInvalidResetToken)
+}
+
+func TestResetPassword_CorruptTokenData(t *testing.T) {
+	// Redis has the key but the value is not a valid uint (corrupt data).
+	repo := &mocks.UserRepository{}
+	svc, mr := newTestService(t, repo)
+
+	mr.Set("pwd_reset:corrupttoken", "not-a-number")
+
+	err := svc.ResetPassword(services.ResetPasswordInput{Token: "corrupttoken", Password: "newpass123"})
+	assert.ErrorIs(t, err, services.ErrInvalidResetToken)
+}
+
+func TestResetPassword_UserNotFoundAfterToken(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, mr := newTestService(t, repo)
+
+	mr.Set("pwd_reset:mytoken", "999")
+	repo.On("FindByID", uint(999)).Return(nil, errors.New("not found"))
+
+	err := svc.ResetPassword(services.ResetPasswordInput{Token: "mytoken", Password: "newpass123"})
+	assert.Error(t, err)
+	repo.AssertExpectations(t)
+}
+
+func TestResetPassword_UpdateFails(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, mr := newTestService(t, repo)
+
+	mr.Set("pwd_reset:mytoken", "42")
+	u := testutil.NewUserWithPassword(t, "oldpass", testutil.UniqueEmail("updfail"))
+	u.ID = 42
+	repo.On("FindByID", uint(42)).Return(u, nil)
+	repo.On("Update", mock.AnythingOfType("*models.User")).Return(errors.New("db error"))
+
+	err := svc.ResetPassword(services.ResetPasswordInput{Token: "mytoken", Password: "newpassword123"})
+	assert.Error(t, err)
+	repo.AssertExpectations(t)
+}
+
+// ─── IsTokenBlacklisted ───────────────────────────────────────────────────
+
+func TestIsTokenBlacklisted_False(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, _ := newTestService(t, repo)
+
+	assert.False(t, svc.IsTokenBlacklisted("some-token"))
+}
+
+func TestIsTokenBlacklisted_True(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, mr := newTestService(t, repo)
+
+	mr.Set("blacklist:some-token", "1")
+
+	assert.True(t, svc.IsTokenBlacklisted("some-token"))
+}
+
+// ─── RefreshTokens — missing branch ──────────────────────────────────────
+
+func TestRefreshTokens_AccountDisabled(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, _ := newTestService(t, repo)
+
+	jwtManager := auth.NewJWTManager("test-secret", 1, 24)
+	tokens, err := jwtManager.GenerateTokenPair(1, "test@example.com", "user")
+	require.NoError(t, err)
+
+	u := testutil.NewUser(t)
+	u.ID = 1
+	u.Active = false
+	repo.On("FindByID", uint(1)).Return(u, nil)
+
+	_, err = svc.RefreshTokens(services.RefreshInput{RefreshToken: tokens.RefreshToken})
+	assert.ErrorIs(t, err, services.ErrAccountDisabled)
+	repo.AssertExpectations(t)
 }

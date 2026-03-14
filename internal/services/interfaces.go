@@ -10,7 +10,6 @@ type UserRepository interface {
 	FindByID(id uint) (*models.User, error)
 	FindByEmail(email string) (*models.User, error)
 	Update(user *models.User) error
-	Delete(id uint) error
 	List(page, pageSize int, opts filtering.Options) ([]models.User, int64, error)
 	ListCursor(afterID uint, limit int, opts filtering.Options) ([]models.User, error)
 	ExistsByEmail(email string) bool

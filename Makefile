@@ -1,4 +1,4 @@
-.PHONY: dev prod down logs build clean setup migrate-up migrate-down migrate-create test test-integration test-coverage swagger lint
+.PHONY: dev prod down logs build clean setup migrate-up migrate-down migrate-create scaffold test test-integration test-coverage swagger lint
 
 -include .env
 export
@@ -72,3 +72,7 @@ migrate-down:
 migrate-create:
 	@if [ -z "$(NAME)" ]; then echo "Usage: make migrate-create NAME=migration_name"; exit 1; fi
 	migrate create -ext sql -dir migrations -seq $(NAME)
+
+scaffold:
+	@if [ -z "$(NAME)" ]; then echo "Usage: make scaffold NAME=post"; exit 1; fi
+	@bash scripts/scaffold.sh $(NAME)

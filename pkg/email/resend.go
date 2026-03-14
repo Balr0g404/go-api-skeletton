@@ -7,7 +7,8 @@ import (
 	"net/http"
 )
 
-const resendAPI = "https://api.resend.com/emails"
+// resendAPI is a var so tests can override it with a local httptest.Server URL.
+var resendAPI = "https://api.resend.com/emails"
 
 // ResendSender sends emails via the Resend REST API (https://resend.com).
 type ResendSender struct {

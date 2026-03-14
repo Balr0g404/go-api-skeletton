@@ -327,6 +327,36 @@ curl -X POST http://localhost:8080/api/v1/auth/refresh \
   -d '{"refresh_token":"<refresh_token>"}'
 ```
 
+## CI/CD GitHub Actions
+
+Le pipeline est défini dans [.github/workflows/ci.yml](.github/workflows/ci.yml) :
+
+| Job | Déclencheur | Description |
+|-----|-------------|-------------|
+| **lint** | push + PR | `golangci-lint` avec la config `.golangci.yml` |
+| **test** | push + PR | `go test ./... -race` + rapport de couverture (Codecov) |
+| **build** | après lint + test | Compilation du binaire en release, upload artifact |
+| **docker** | push sur `main`/`master` seulement | Build + push de l'image vers GHCR (`ghcr.io/<owner>/<repo>`) |
+
+Le job Docker utilise `GITHUB_TOKEN` (automatique) — aucun secret à configurer pour GHCR.
+
+## Scaffold d'un nouveau module
+
+```bash
+make scaffold NAME=post
+```
+
+Génère en une commande :
+
+| Fichier | Contenu |
+|---------|---------|
+| `internal/models/post.go` | Struct GORM + `ToResponse()` |
+| `internal/repositories/post.go` | CRUD de base (Create, FindByID, Update, Delete) |
+| `internal/services/post.go` | Interface repository + service avec logique métier |
+| `internal/handlers/post.go` | Handlers HTTP avec annotations Swagger |
+
+Le script affiche les instructions de câblage (main.go + router) à la fin.
+
 ## Personnalisation
 
 1. Renommer le module dans `go.mod` : remplacer `github.com/Balr0g404/go-api-skeletton`
@@ -359,3 +389,5 @@ curl -X POST http://localhost:8080/api/v1/auth/refresh \
 - Hot reload en développement
 - Build multi-stage optimisé pour la production
 - Health check avec dépendances Docker
+- Pipeline CI/CD GitHub Actions (lint → test → build → push GHCR)
+- Script de scaffold (`make scaffold NAME=<module>`) pour générer modèle + repository + service + handler

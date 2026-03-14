@@ -43,7 +43,7 @@ func Setup(
 	// @Success      200  {object}  response.APIResponse{data=handlers.HealthResponse}
 	// @Router       /health [get]
 	r.GET("/health", func(c *gin.Context) {
-		response.OK(c, gin.H{"status": "ok"})
+		response.OK(c, handlers.HealthResponse{Status: "ok"})
 	})
 
 	if !isProd {

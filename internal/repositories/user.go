@@ -50,10 +50,6 @@ func (r *UserRepository) Update(user *models.User) error {
 	return r.db.Save(user).Error
 }
 
-func (r *UserRepository) Delete(id uint) error {
-	return r.db.Delete(&models.User{}, id).Error
-}
-
 func (r *UserRepository) List(page, pageSize int, opts filtering.Options) ([]models.User, int64, error) {
 	var users []models.User
 	var total int64

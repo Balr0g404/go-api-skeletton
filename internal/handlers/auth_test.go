@@ -932,3 +932,106 @@ func TestListUsersCursorHandler_FilterByActive(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	s.repo.AssertExpectations(t)
 }
+
+// ─── Login — missing branches ──────────────────────────────────────────────
+
+func TestLoginHandler_InvalidBody(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	r := gin.New()
+	r.POST("/login", s.handler.Login)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/login", bytes.NewBufferString("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ─── ResetPassword — missing branches ─────────────────────────────────────
+
+func TestResetPasswordHandler_Success(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	s.mr.Set("pwd_reset:goodtoken", "1")
+	s.mr.SetTTL("pwd_reset:goodtoken", 3600)
+
+	user := &models.User{ID: 1, Email: "user@example.com", Active: true, Role: models.RoleUser}
+	require.NoError(t, user.SetPassword("oldpassword1"))
+	s.repo.On("FindByID", uint(1)).Return(user, nil)
+	s.repo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/auth/reset-password", jsonBody(t, map[string]string{
+		"token": "goodtoken", "password": "newpassword123",
+	}))
+	r.Header.Set("Content-Type", "application/json")
+	c, _ := gin.CreateTestContext(w)
+	c.Request = r
+	s.handler.ResetPassword(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestResetPasswordHandler_InvalidBody(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/auth/reset-password", bytes.NewBufferString("not json"))
+	r.Header.Set("Content-Type", "application/json")
+	c, _ := gin.CreateTestContext(w)
+	c.Request = r
+	s.handler.ResetPassword(c)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ─── UpdateProfile — missing branches ─────────────────────────────────────
+
+func TestUpdateProfileHandler_Error(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	s.repo.On("FindByID", uint(99)).Return(nil, errors.New("not found"))
+
+	r := gin.New()
+	r.PUT("/profile", func(c *gin.Context) {
+		c.Set("user_id", uint(99))
+		s.handler.UpdateProfile(c)
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPut, "/profile", jsonBody(t, map[string]string{
+		"first_name": "New",
+		"last_name":  "Name",
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// ─── ChangePassword — missing branches ────────────────────────────────────
+
+func TestChangePasswordHandler_InternalError(t *testing.T) {
+	s := newHandlerSetup(t)
+
+	// FindByID fails → service returns ErrUserNotFound → handler default: InternalError.
+	s.repo.On("FindByID", uint(1)).Return(nil, errors.New("db error"))
+
+	r := gin.New()
+	r.PUT("/password", func(c *gin.Context) {
+		c.Set("user_id", uint(1))
+		s.handler.ChangePassword(c)
+	})
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPut, "/password", jsonBody(t, map[string]string{
+		"current_password": "oldpassword1",
+		"new_password":     "newpassword2",
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}

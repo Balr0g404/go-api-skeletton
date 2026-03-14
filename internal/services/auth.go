@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 	"github.com/Balr0g404/go-api-skeletton/pkg/filtering"
 	"github.com/Balr0g404/go-api-skeletton/pkg/pagination"
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -101,7 +101,11 @@ func (s *AuthService) Register(input RegisterInput) (*models.UserResponse, *auth
 		return nil, nil, err
 	}
 
-	go func() { _ = s.mailer.Send(email.Welcome(user.FirstName, user.Email)) }()
+	go func() {
+		if err := s.mailer.Send(email.Welcome(user.FirstName, user.Email)); err != nil {
+			log.Warn().Err(err).Str("to", user.Email).Msg("failed to send welcome email")
+		}
+	}()
 
 	tokens, err := s.jwtManager.GenerateTokenPair(user.ID, user.Email, string(user.Role))
 	if err != nil {
@@ -291,27 +295,6 @@ func (s *AuthService) isTokenBlacklisted(token string) bool {
 	return err == nil && result > 0
 }
 
-func (s *AuthService) CacheUser(user *models.UserResponse, ttl time.Duration) {
-	data, err := json.Marshal(user)
-	if err != nil {
-		return
-	}
-	key := fmt.Sprintf("user:%d", user.ID)
-	s.redis.Set(context.Background(), key, data, ttl)
-}
-
-func (s *AuthService) GetCachedUser(userID uint) *models.UserResponse {
-	key := fmt.Sprintf("user:%d", userID)
-	data, err := s.redis.Get(context.Background(), key).Bytes()
-	if err != nil {
-		return nil
-	}
-	var user models.UserResponse
-	if err := json.Unmarshal(data, &user); err != nil {
-		return nil
-	}
-	return &user
-}
 
 func (s *AuthService) ForgotPassword(input ForgotPasswordInput) error {
 	user, err := s.userRepo.FindByEmail(input.Email)
@@ -322,7 +305,8 @@ func (s *AuthService) ForgotPassword(input ForgotPasswordInput) error {
 
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
-		return err
+		log.Error().Err(err).Msg("failed to generate password reset token")
+		return nil
 	}
 	token := hex.EncodeToString(tokenBytes)
 
@@ -330,7 +314,11 @@ func (s *AuthService) ForgotPassword(input ForgotPasswordInput) error {
 	s.redis.Set(context.Background(), key, strconv.FormatUint(uint64(user.ID), 10), time.Hour)
 
 	resetURL := fmt.Sprintf("%s/reset-password?token=%s", s.baseURL, token)
-	go func() { _ = s.mailer.Send(email.PasswordReset(user.FirstName, resetURL)) }()
+	go func() {
+		if err := s.mailer.Send(email.PasswordReset(user.FirstName, resetURL)); err != nil {
+			log.Warn().Err(err).Str("to", user.Email).Msg("failed to send password reset email")
+		}
+	}()
 
 	return nil
 }
