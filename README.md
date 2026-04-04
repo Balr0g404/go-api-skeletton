@@ -23,36 +23,21 @@ cd mon-api
 rm -rf .git && git init
 ```
 
-### 2. Renommer le module Go
+### 2. Lancer le script d'installation
 
 ```bash
-# Remplacer le module dans go.mod et tous les fichiers .go
-OLD=github.com/Balr0g404/go-api-skeletton
-NEW=github.com/<vous>/<votre-projet>
-
-find . -type f -name '*.go' -exec sed -i "s|$OLD|$NEW|g" {} +
-sed -i "s|$OLD|$NEW|g" go.mod
-
-go mod tidy
+make setup
 ```
 
-### 3. Configurer l'environnement
+Le script interactif vous guide à travers :
+- le renommage du module Go (`go.mod` + tous les fichiers `.go`)
+- la création du `.env` avec les variables obligatoires
+- la génération automatique du `JWT_SECRET` (50 chars) ou saisie manuelle
+- les credentials de l'admin de seed
 
-```bash
-cp .env.example .env
-```
+> Pour le détail des variables disponibles, voir [`.env.example`](.env.example).
 
-Éditez `.env` — les variables indispensables pour démarrer :
-
-```dotenv
-JWT_SECRET=changeme-32-chars-minimum          # obligatoire en prod
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=changeme
-```
-
-Tout le reste (DB, Redis, SMTP) a des valeurs par défaut compatibles avec Docker Compose.
-
-### 4. Lancer le serveur
+### 3. Lancer le serveur
 
 ```bash
 make dev        # démarre PostgreSQL + Redis + le serveur avec hot reload (Air)

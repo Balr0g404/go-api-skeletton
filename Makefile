@@ -4,18 +4,18 @@
 export
 
 setup:
-	cp --update=none .env.example .env || true
+	@bash scripts/setup.sh
 
 install-hooks:
 	@bash scripts/install-hooks.sh
 
-dev: setup
+dev:
 	docker compose -f docker-compose.dev.yml up --build
 
-dev-d: setup
+dev-d:
 	docker compose -f docker-compose.dev.yml up --build -d
 
-prod: setup
+prod:
 	docker compose -f docker-compose.prod.yml up --build -d
 
 down-dev:
