@@ -134,7 +134,7 @@ read -r gen_jwt
 
 if [[ ! "$gen_jwt" =~ ^[Nn]$ ]]; then
   # Generate 50 printable chars (no special shell chars to avoid sed issues)
-  JWT_SECRET=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 50)
+  JWT_SECRET=$(set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 50)
   set_env "JWT_SECRET" "$JWT_SECRET"
   success "JWT_SECRET auto-generated (50 chars, alphanumeric)"
 else
