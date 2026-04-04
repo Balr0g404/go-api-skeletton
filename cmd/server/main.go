@@ -40,12 +40,18 @@ func main() {
 		log.Fatal().Err(err).Msg("invalid configuration")
 	}
 
-	db := database.NewPostgres(&cfg.DB, cfg.IsProduction())
+	db, err := database.NewPostgres(&cfg.DB, cfg.IsProduction())
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to connect to database")
+	}
 
 	database.RunMigrations(&cfg.DB)
 	database.Seed(db, cfg.IsProduction(), cfg.Seed)
 
-	redisClient := database.NewRedis(&cfg.Redis)
+	redisClient, err := database.NewRedis(&cfg.Redis)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to connect to redis")
+	}
 
 	jwtManager := auth.NewJWTManager(
 		cfg.JWT.Secret,

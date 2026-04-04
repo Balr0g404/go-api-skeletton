@@ -2,6 +2,105 @@
 
 Template de démarrage pour API REST avec Go, Gin, GORM, PostgreSQL, Redis.
 
+## Quick Start
+
+### Prérequis
+
+- [Go 1.22+](https://go.dev/dl/)
+- [Docker](https://docs.docker.com/get-docker/) + Docker Compose
+- `make`
+
+### 1. Créer votre projet depuis ce template
+
+```bash
+# Option A — bouton "Use this template" sur GitHub, puis :
+git clone https://github.com/<vous>/<votre-projet>.git
+cd <votre-projet>
+
+# Option B — clone direct
+git clone https://github.com/Balr0g404/go-api-skeletton.git mon-api
+cd mon-api
+rm -rf .git && git init
+```
+
+### 2. Renommer le module Go
+
+```bash
+# Remplacer le module dans go.mod et tous les fichiers .go
+OLD=github.com/Balr0g404/go-api-skeletton
+NEW=github.com/<vous>/<votre-projet>
+
+find . -type f -name '*.go' -exec sed -i "s|$OLD|$NEW|g" {} +
+sed -i "s|$OLD|$NEW|g" go.mod
+
+go mod tidy
+```
+
+### 3. Configurer l'environnement
+
+```bash
+cp .env.example .env
+```
+
+Éditez `.env` — les variables indispensables pour démarrer :
+
+```dotenv
+JWT_SECRET=changeme-32-chars-minimum          # obligatoire en prod
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=changeme
+```
+
+Tout le reste (DB, Redis, SMTP) a des valeurs par défaut compatibles avec Docker Compose.
+
+### 4. Lancer le serveur
+
+```bash
+make dev        # démarre PostgreSQL + Redis + le serveur avec hot reload (Air)
+```
+
+Vérifiez que tout fonctionne :
+
+```bash
+curl http://localhost:8080/health
+# {"success":true,"data":{"status":"ok"}}
+```
+
+La documentation Swagger est disponible sur `http://localhost:8080/swagger/index.html`.
+
+### 5. Ajouter votre premier domaine métier
+
+Générez le squelette d'un nouveau module en une commande :
+
+```bash
+make scaffold NAME=post
+```
+
+Cela crée :
+- `internal/models/post.go` — struct GORM + réponse JSON
+- `internal/repositories/post.go` — CRUD de base
+- `internal/services/post.go` — interface + service
+- `internal/handlers/post.go` — handlers HTTP avec annotations Swagger
+
+Le script affiche ensuite les 3 lignes à ajouter dans `cmd/server/main.go` et `internal/router/` pour brancher les routes.
+
+### 6. Créer la migration SQL
+
+```bash
+make migrate-create NAME=create_posts_table
+```
+
+Éditez le fichier `migrations/<timestamp>_create_posts_table.up.sql` généré, puis relancez `make dev` — les migrations s'appliquent automatiquement au démarrage.
+
+### 7. Lancer les tests
+
+```bash
+make test                 # tests unitaires (aucune dépendance externe)
+make test-integration     # tests d'intégration (requiert Docker en cours)
+make test-coverage        # rapport HTML de couverture
+```
+
+---
+
 ## Stack technique
 
 | Couche | Choix | Justification |

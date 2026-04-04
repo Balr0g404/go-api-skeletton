@@ -45,7 +45,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	user, tokens, err := h.authService.Register(input)
+	user, tokens, err := h.authService.Register(c.Request.Context(), input)
 	if err != nil {
 		switch err {
 		case services.ErrEmailAlreadyExists:
@@ -79,7 +79,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	user, tokens, err := h.authService.Login(input)
+	user, tokens, err := h.authService.Login(c.Request.Context(), input)
 	if err != nil {
 		switch err {
 		case services.ErrInvalidCredentials:
@@ -113,7 +113,7 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	tokens, err := h.authService.RefreshTokens(input)
+	tokens, err := h.authService.RefreshTokens(c.Request.Context(), input)
 	if err != nil {
 		response.Unauthorized(c, "invalid refresh token")
 		return
@@ -139,7 +139,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	var body LogoutInput
 	c.ShouldBindJSON(&body)
 
-	h.authService.Logout(accessToken, body.RefreshToken)
+	h.authService.Logout(c.Request.Context(), accessToken, body.RefreshToken)
 	response.Message(c, "logged out successfully")
 }
 
@@ -156,7 +156,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 func (h *AuthHandler) GetProfile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 
-	user, err := h.authService.GetProfile(userID)
+	user, err := h.authService.GetProfile(c.Request.Context(), userID)
 	if err != nil {
 		response.NotFound(c, "user not found")
 		return
@@ -187,7 +187,7 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	user, err := h.authService.UpdateProfile(userID, input)
+	user, err := h.authService.UpdateProfile(c.Request.Context(), userID, input)
 	if err != nil {
 		response.InternalError(c)
 		return
@@ -218,7 +218,7 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	if err := h.authService.ChangePassword(userID, input); err != nil {
+	if err := h.authService.ChangePassword(c.Request.Context(), userID, input); err != nil {
 		switch err {
 		case services.ErrInvalidCredentials:
 			response.BadRequest(c, "current password is incorrect")
@@ -260,7 +260,7 @@ func (h *AuthHandler) ListUsers(c *gin.Context) {
 
 	opts := filtering.Parse(c, userListAllowed)
 
-	users, total, err := h.authService.ListUsers(page, pageSize, opts)
+	users, total, err := h.authService.ListUsers(c.Request.Context(), page, pageSize, opts)
 	if err != nil {
 		response.InternalError(c)
 		return
@@ -298,7 +298,7 @@ func (h *AuthHandler) ListUsersCursor(c *gin.Context) {
 
 	opts := filtering.Parse(c, userListAllowed)
 
-	users, nextCursor, hasNext, err := h.authService.ListUsersCursor(cursor, limit, opts)
+	users, nextCursor, hasNext, err := h.authService.ListUsersCursor(c.Request.Context(), cursor, limit, opts)
 	if err != nil {
 		response.BadRequest(c, "invalid cursor")
 		return
@@ -328,7 +328,7 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	_ = h.authService.ForgotPassword(input) // always 200
+	_ = h.authService.ForgotPassword(c.Request.Context(), input) // always 200
 	response.Message(c, "if this email is registered, a reset link has been sent")
 }
 
@@ -348,7 +348,7 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	if err := h.authService.ResetPassword(input); err != nil {
+	if err := h.authService.ResetPassword(c.Request.Context(), input); err != nil {
 		response.BadRequest(c, "invalid or expired reset token")
 		return
 	}
@@ -389,7 +389,7 @@ func (h *AuthHandler) SetUserRole(c *gin.Context) {
 		return
 	}
 
-	user, err := h.authService.SetUserRole(uint(id), input.Role)
+	user, err := h.authService.SetUserRole(c.Request.Context(), uint(id), input.Role)
 	if err != nil {
 		switch err {
 		case services.ErrUserNotFound:

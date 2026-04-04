@@ -16,6 +16,7 @@ import (
 	"github.com/Balr0g404/go-api-skeletton/pkg/pagination"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
+	"gorm.io/gorm"
 )
 
 var (
@@ -80,8 +81,8 @@ type ChangePasswordInput struct {
 	NewPassword     string `json:"new_password" binding:"required,min=8" example:"newpassword456"`
 }
 
-func (s *AuthService) Register(input RegisterInput) (*models.UserResponse, *auth.TokenPair, error) {
-	if s.userRepo.ExistsByEmail(input.Email) {
+func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*models.UserResponse, *auth.TokenPair, error) {
+	if s.userRepo.ExistsByEmail(ctx, input.Email) {
 		return nil, nil, ErrEmailAlreadyExists
 	}
 
@@ -97,7 +98,10 @@ func (s *AuthService) Register(input RegisterInput) (*models.UserResponse, *auth
 		return nil, nil, err
 	}
 
-	if err := s.userRepo.Create(user); err != nil {
+	if err := s.userRepo.Create(ctx, user); err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			return nil, nil, ErrEmailAlreadyExists
+		}
 		return nil, nil, err
 	}
 
@@ -116,8 +120,8 @@ func (s *AuthService) Register(input RegisterInput) (*models.UserResponse, *auth
 	return &resp, tokens, nil
 }
 
-func (s *AuthService) Login(input LoginInput) (*models.UserResponse, *auth.TokenPair, error) {
-	user, err := s.userRepo.FindByEmail(input.Email)
+func (s *AuthService) Login(ctx context.Context, input LoginInput) (*models.UserResponse, *auth.TokenPair, error) {
+	user, err := s.userRepo.FindByEmail(ctx, input.Email)
 	if err != nil {
 		return nil, nil, ErrInvalidCredentials
 	}
@@ -139,8 +143,8 @@ func (s *AuthService) Login(input LoginInput) (*models.UserResponse, *auth.Token
 	return &resp, tokens, nil
 }
 
-func (s *AuthService) RefreshTokens(input RefreshInput) (*auth.TokenPair, error) {
-	if s.isTokenBlacklisted(input.RefreshToken) {
+func (s *AuthService) RefreshTokens(ctx context.Context, input RefreshInput) (*auth.TokenPair, error) {
+	if s.isTokenBlacklisted(ctx, input.RefreshToken) {
 		return nil, ErrTokenBlacklisted
 	}
 
@@ -149,7 +153,7 @@ func (s *AuthService) RefreshTokens(input RefreshInput) (*auth.TokenPair, error)
 		return nil, err
 	}
 
-	user, err := s.userRepo.FindByID(claims.UserID)
+	user, err := s.userRepo.FindByID(ctx, claims.UserID)
 	if err != nil {
 		return nil, ErrUserNotFound
 	}
@@ -158,24 +162,24 @@ func (s *AuthService) RefreshTokens(input RefreshInput) (*auth.TokenPair, error)
 		return nil, ErrAccountDisabled
 	}
 
-	s.blacklistToken(input.RefreshToken, time.Until(claims.ExpiresAt.Time))
+	s.blacklistToken(ctx, input.RefreshToken, time.Until(claims.ExpiresAt.Time))
 
 	return s.jwtManager.GenerateTokenPair(user.ID, user.Email, string(user.Role))
 }
 
-func (s *AuthService) Logout(accessToken, refreshToken string) {
+func (s *AuthService) Logout(ctx context.Context, accessToken, refreshToken string) {
 	if claims, err := s.jwtManager.ValidateToken(accessToken, auth.AccessToken); err == nil {
-		s.blacklistToken(accessToken, time.Until(claims.ExpiresAt.Time))
+		s.blacklistToken(ctx, accessToken, time.Until(claims.ExpiresAt.Time))
 	}
 	if refreshToken != "" {
 		if claims, err := s.jwtManager.ValidateToken(refreshToken, auth.RefreshToken); err == nil {
-			s.blacklistToken(refreshToken, time.Until(claims.ExpiresAt.Time))
+			s.blacklistToken(ctx, refreshToken, time.Until(claims.ExpiresAt.Time))
 		}
 	}
 }
 
-func (s *AuthService) GetProfile(userID uint) (*models.UserResponse, error) {
-	user, err := s.userRepo.FindByID(userID)
+func (s *AuthService) GetProfile(ctx context.Context, userID uint) (*models.UserResponse, error) {
+	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
 		return nil, ErrUserNotFound
 	}
@@ -183,8 +187,8 @@ func (s *AuthService) GetProfile(userID uint) (*models.UserResponse, error) {
 	return &resp, nil
 }
 
-func (s *AuthService) UpdateProfile(userID uint, input UpdateProfileInput) (*models.UserResponse, error) {
-	user, err := s.userRepo.FindByID(userID)
+func (s *AuthService) UpdateProfile(ctx context.Context, userID uint, input UpdateProfileInput) (*models.UserResponse, error) {
+	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
 		return nil, ErrUserNotFound
 	}
@@ -196,7 +200,7 @@ func (s *AuthService) UpdateProfile(userID uint, input UpdateProfileInput) (*mod
 		user.LastName = input.LastName
 	}
 
-	if err := s.userRepo.Update(user); err != nil {
+	if err := s.userRepo.Update(ctx, user); err != nil {
 		return nil, err
 	}
 
@@ -204,8 +208,8 @@ func (s *AuthService) UpdateProfile(userID uint, input UpdateProfileInput) (*mod
 	return &resp, nil
 }
 
-func (s *AuthService) ChangePassword(userID uint, input ChangePasswordInput) error {
-	user, err := s.userRepo.FindByID(userID)
+func (s *AuthService) ChangePassword(ctx context.Context, userID uint, input ChangePasswordInput) error {
+	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
 		return ErrUserNotFound
 	}
@@ -218,11 +222,11 @@ func (s *AuthService) ChangePassword(userID uint, input ChangePasswordInput) err
 		return err
 	}
 
-	return s.userRepo.Update(user)
+	return s.userRepo.Update(ctx, user)
 }
 
-func (s *AuthService) ListUsers(page, pageSize int, opts filtering.Options) ([]models.UserResponse, int64, error) {
-	users, total, err := s.userRepo.List(page, pageSize, opts)
+func (s *AuthService) ListUsers(ctx context.Context, page, pageSize int, opts filtering.Options) ([]models.UserResponse, int64, error) {
+	users, total, err := s.userRepo.List(ctx, page, pageSize, opts)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -237,14 +241,14 @@ func (s *AuthService) ListUsers(page, pageSize int, opts filtering.Options) ([]m
 // ListUsersCursor returns a page of users using cursor-based pagination.
 // cursorStr is an opaque base64-encoded ID; pass "" for the first page.
 // Returns: users, nextCursor (empty if no more pages), hasNext, error.
-func (s *AuthService) ListUsersCursor(cursorStr string, limit int, opts filtering.Options) ([]models.UserResponse, string, bool, error) {
+func (s *AuthService) ListUsersCursor(ctx context.Context, cursorStr string, limit int, opts filtering.Options) ([]models.UserResponse, string, bool, error) {
 	afterID, err := pagination.DecodeCursor(cursorStr)
 	if err != nil {
 		return nil, "", false, err
 	}
 
 	// Fetch one extra to detect whether a next page exists.
-	users, err := s.userRepo.ListCursor(afterID, limit+1, opts)
+	users, err := s.userRepo.ListCursor(ctx, afterID, limit+1, opts)
 	if err != nil {
 		return nil, "", false, err
 	}
@@ -267,36 +271,44 @@ func (s *AuthService) ListUsersCursor(cursorStr string, limit int, opts filterin
 	return responses, nextCursor, hasNext, nil
 }
 
-func (s *AuthService) SetUserRole(userID uint, role models.Role) (*models.UserResponse, error) {
-	user, err := s.userRepo.FindByID(userID)
+func (s *AuthService) SetUserRole(ctx context.Context, userID uint, role models.Role) (*models.UserResponse, error) {
+	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
 		return nil, ErrUserNotFound
 	}
 	user.Role = role
-	if err := s.userRepo.Update(user); err != nil {
+	if err := s.userRepo.Update(ctx, user); err != nil {
 		return nil, err
 	}
 	resp := user.ToResponse()
 	return &resp, nil
 }
 
-func (s *AuthService) IsTokenBlacklisted(token string) bool {
-	return s.isTokenBlacklisted(token)
+func (s *AuthService) IsTokenBlacklisted(ctx context.Context, token string) bool {
+	return s.isTokenBlacklisted(ctx, token)
 }
 
-func (s *AuthService) blacklistToken(token string, expiration time.Duration) {
+func (s *AuthService) blacklistToken(ctx context.Context, token string, expiration time.Duration) {
 	key := fmt.Sprintf("blacklist:%s", token)
-	s.redis.Set(context.Background(), key, true, expiration)
+	if err := s.redis.Set(ctx, key, true, expiration).Err(); err != nil {
+		log.Error().Err(err).Msg("redis unavailable: failed to blacklist token, token remains valid until expiry")
+	}
 }
 
-func (s *AuthService) isTokenBlacklisted(token string) bool {
+// isTokenBlacklisted returns true if the token is blacklisted.
+// Fail-closed: if Redis is unavailable, access is denied to prevent use of revoked tokens.
+func (s *AuthService) isTokenBlacklisted(ctx context.Context, token string) bool {
 	key := fmt.Sprintf("blacklist:%s", token)
-	result, err := s.redis.Exists(context.Background(), key).Result()
-	return err == nil && result > 0
+	result, err := s.redis.Exists(ctx, key).Result()
+	if err != nil {
+		log.Error().Err(err).Msg("redis unavailable: cannot verify token blacklist, denying access (fail-closed)")
+		return true
+	}
+	return result > 0
 }
 
-func (s *AuthService) ForgotPassword(input ForgotPasswordInput) error {
-	user, err := s.userRepo.FindByEmail(input.Email)
+func (s *AuthService) ForgotPassword(ctx context.Context, input ForgotPasswordInput) error {
+	user, err := s.userRepo.FindByEmail(ctx, input.Email)
 	if err != nil {
 		// Security: don't reveal whether the email is registered
 		return nil
@@ -310,7 +322,11 @@ func (s *AuthService) ForgotPassword(input ForgotPasswordInput) error {
 	token := hex.EncodeToString(tokenBytes)
 
 	key := fmt.Sprintf("pwd_reset:%s", token)
-	s.redis.Set(context.Background(), key, strconv.FormatUint(uint64(user.ID), 10), time.Hour)
+	// Fail-closed: if Redis is unavailable, don't send a reset email for a token we couldn't store.
+	if err := s.redis.Set(ctx, key, strconv.FormatUint(uint64(user.ID), 10), time.Hour).Err(); err != nil {
+		log.Error().Err(err).Msg("redis unavailable: failed to store password reset token (fail-closed)")
+		return nil
+	}
 
 	resetURL := fmt.Sprintf("%s/reset-password?token=%s", s.baseURL, token)
 	go func() {
@@ -322,9 +338,9 @@ func (s *AuthService) ForgotPassword(input ForgotPasswordInput) error {
 	return nil
 }
 
-func (s *AuthService) ResetPassword(input ResetPasswordInput) error {
+func (s *AuthService) ResetPassword(ctx context.Context, input ResetPasswordInput) error {
 	key := fmt.Sprintf("pwd_reset:%s", input.Token)
-	val, err := s.redis.Get(context.Background(), key).Result()
+	val, err := s.redis.Get(ctx, key).Result()
 	if err != nil {
 		return ErrInvalidResetToken
 	}
@@ -334,7 +350,7 @@ func (s *AuthService) ResetPassword(input ResetPasswordInput) error {
 		return ErrInvalidResetToken
 	}
 
-	user, err := s.userRepo.FindByID(uint(userID64))
+	user, err := s.userRepo.FindByID(ctx, uint(userID64))
 	if err != nil {
 		return ErrInvalidResetToken
 	}
@@ -343,10 +359,12 @@ func (s *AuthService) ResetPassword(input ResetPasswordInput) error {
 		return err
 	}
 
-	if err := s.userRepo.Update(user); err != nil {
+	if err := s.userRepo.Update(ctx, user); err != nil {
 		return err
 	}
 
-	s.redis.Del(context.Background(), key)
+	if err := s.redis.Del(ctx, key).Err(); err != nil {
+		log.Warn().Err(err).Str("key", key).Msg("redis unavailable: failed to delete used password reset token")
+	}
 	return nil
 }

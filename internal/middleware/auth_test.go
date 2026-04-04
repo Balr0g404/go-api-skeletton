@@ -1,6 +1,7 @@
 package middleware_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -101,7 +102,7 @@ func TestAuthRequired_BlacklistedToken(t *testing.T) {
 	pair, err := s.jwtManager.GenerateTokenPair(1, "user@example.com", "user")
 	require.NoError(t, err)
 
-	s.svc.Logout(pair.AccessToken, "")
+	s.svc.Logout(context.Background(), pair.AccessToken, "")
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)

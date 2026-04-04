@@ -2,7 +2,6 @@ package database
 
 import (
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/Balr0g404/go-api-skeletton/internal/config"
@@ -11,7 +10,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func NewPostgres(cfg *config.DBConfig, isProd bool) *gorm.DB {
+func NewPostgres(cfg *config.DBConfig, isProd bool) (*gorm.DB, error) {
 	dsn := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.Name, cfg.SSLMode,
@@ -26,17 +25,17 @@ func NewPostgres(cfg *config.DBConfig, isProd bool) *gorm.DB {
 		Logger: logger.Default.LogMode(logLevel),
 	})
 	if err != nil {
-		log.Fatalf("failed to connect to database: %v", err)
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
 	sqlDB, err := db.DB()
 	if err != nil {
-		log.Fatalf("failed to get underlying sql.DB: %v", err)
+		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
 	}
 
 	sqlDB.SetMaxIdleConns(10)
 	sqlDB.SetMaxOpenConns(100)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
-	return db
+	return db, nil
 }

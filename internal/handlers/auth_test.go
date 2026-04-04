@@ -82,9 +82,9 @@ func newAuthenticatedContext(c *gin.Context, userID uint, role models.Role, toke
 func TestRegisterHandler_Success(t *testing.T) {
 	s := newHandlerSetup(t)
 
-	s.repo.On("ExistsByEmail", "new@example.com").Return(false)
-	s.repo.On("Create", mock.AnythingOfType("*models.User")).
-		Run(func(args mock.Arguments) { args.Get(0).(*models.User).ID = 1 }).
+	s.repo.On("ExistsByEmail", mock.Anything, "new@example.com").Return(false)
+	s.repo.On("Create", mock.Anything, mock.AnythingOfType("*models.User")).
+		Run(func(args mock.Arguments) { args.Get(1).(*models.User).ID = 1 }).
 		Return(nil)
 
 	r := gin.New()
@@ -139,7 +139,7 @@ func TestRegisterHandler_MissingRequiredFields(t *testing.T) {
 func TestRegisterHandler_EmailConflict(t *testing.T) {
 	s := newHandlerSetup(t)
 
-	s.repo.On("ExistsByEmail", "taken@example.com").Return(true)
+	s.repo.On("ExistsByEmail", mock.Anything, "taken@example.com").Return(true)
 
 	r := gin.New()
 	r.POST("/register", s.handler.Register)
@@ -160,8 +160,8 @@ func TestRegisterHandler_EmailConflict(t *testing.T) {
 func TestRegisterHandler_InternalError(t *testing.T) {
 	s := newHandlerSetup(t)
 
-	s.repo.On("ExistsByEmail", "new@example.com").Return(false)
-	s.repo.On("Create", mock.AnythingOfType("*models.User")).Return(errors.New("db error"))
+	s.repo.On("ExistsByEmail", mock.Anything, "new@example.com").Return(false)
+	s.repo.On("Create", mock.Anything, mock.AnythingOfType("*models.User")).Return(errors.New("db error"))
 
 	r := gin.New()
 	r.POST("/register", s.handler.Register)
@@ -186,7 +186,7 @@ func TestLoginHandler_Success(t *testing.T) {
 
 	user := &models.User{Email: "user@example.com", Active: true, Role: models.RoleUser}
 	require.NoError(t, user.SetPassword("password123"))
-	s.repo.On("FindByEmail", "user@example.com").Return(user, nil)
+	s.repo.On("FindByEmail", mock.Anything, "user@example.com").Return(user, nil)
 
 	r := gin.New()
 	r.POST("/login", s.handler.Login)
@@ -207,7 +207,7 @@ func TestLoginHandler_Success(t *testing.T) {
 func TestLoginHandler_InvalidCredentials(t *testing.T) {
 	s := newHandlerSetup(t)
 
-	s.repo.On("FindByEmail", "nobody@example.com").Return(nil, errors.New("not found"))
+	s.repo.On("FindByEmail", mock.Anything, "nobody@example.com").Return(nil, errors.New("not found"))
 
 	r := gin.New()
 	r.POST("/login", s.handler.Login)
@@ -228,7 +228,7 @@ func TestLoginHandler_AccountDisabled(t *testing.T) {
 
 	user := &models.User{Email: "disabled@example.com", Active: false}
 	require.NoError(t, user.SetPassword("password123"))
-	s.repo.On("FindByEmail", "disabled@example.com").Return(user, nil)
+	s.repo.On("FindByEmail", mock.Anything, "disabled@example.com").Return(user, nil)
 
 	r := gin.New()
 	r.POST("/login", s.handler.Login)
@@ -253,7 +253,7 @@ func TestRefreshTokenHandler_Success(t *testing.T) {
 	pair, err := s.jwtManager.GenerateTokenPair(1, "user@example.com", "user")
 	require.NoError(t, err)
 
-	s.repo.On("FindByID", uint(1)).Return(user, nil)
+	s.repo.On("FindByID", mock.Anything, uint(1)).Return(user, nil)
 
 	r := gin.New()
 	r.POST("/refresh", s.handler.RefreshToken)
@@ -330,7 +330,7 @@ func TestGetProfileHandler_Success(t *testing.T) {
 	s := newHandlerSetup(t)
 
 	user := &models.User{ID: 1, Email: "user@example.com", Role: models.RoleUser, Active: true}
-	s.repo.On("FindByID", uint(1)).Return(user, nil)
+	s.repo.On("FindByID", mock.Anything, uint(1)).Return(user, nil)
 
 	r := gin.New()
 	r.GET("/profile", func(c *gin.Context) {
@@ -350,7 +350,7 @@ func TestGetProfileHandler_Success(t *testing.T) {
 func TestGetProfileHandler_NotFound(t *testing.T) {
 	s := newHandlerSetup(t)
 
-	s.repo.On("FindByID", uint(99)).Return(nil, errors.New("not found"))
+	s.repo.On("FindByID", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
 
 	r := gin.New()
 	r.GET("/profile", func(c *gin.Context) {
@@ -371,8 +371,8 @@ func TestUpdateProfileHandler_Success(t *testing.T) {
 	s := newHandlerSetup(t)
 
 	user := &models.User{ID: 1, Email: "user@example.com", FirstName: "Old", Role: models.RoleUser, Active: true}
-	s.repo.On("FindByID", uint(1)).Return(user, nil)
-	s.repo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
+	s.repo.On("FindByID", mock.Anything, uint(1)).Return(user, nil)
+	s.repo.On("Update", mock.Anything, mock.AnythingOfType("*models.User")).Return(nil)
 
 	r := gin.New()
 	r.PUT("/profile", func(c *gin.Context) {
@@ -415,8 +415,8 @@ func TestChangePasswordHandler_Success(t *testing.T) {
 
 	user := &models.User{ID: 1, Email: "user@example.com", Active: true, Role: models.RoleUser}
 	require.NoError(t, user.SetPassword("oldpassword1"))
-	s.repo.On("FindByID", uint(1)).Return(user, nil)
-	s.repo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
+	s.repo.On("FindByID", mock.Anything, uint(1)).Return(user, nil)
+	s.repo.On("Update", mock.Anything, mock.AnythingOfType("*models.User")).Return(nil)
 
 	r := gin.New()
 	r.PUT("/password", func(c *gin.Context) {
@@ -440,7 +440,7 @@ func TestChangePasswordHandler_WrongCurrentPassword(t *testing.T) {
 
 	user := &models.User{ID: 1, Email: "user@example.com", Active: true, Role: models.RoleUser}
 	require.NoError(t, user.SetPassword("correct1234"))
-	s.repo.On("FindByID", uint(1)).Return(user, nil)
+	s.repo.On("FindByID", mock.Anything, uint(1)).Return(user, nil)
 
 	r := gin.New()
 	r.PUT("/password", func(c *gin.Context) {
@@ -468,7 +468,7 @@ func TestListUsersHandler_Success(t *testing.T) {
 		{ID: 1, Email: "a@example.com", Role: models.RoleUser, Active: true},
 		{ID: 2, Email: "b@example.com", Role: models.RoleAdmin, Active: true},
 	}
-	s.repo.On("List", 1, 20, mock.Anything).Return(users, int64(2), nil)
+	s.repo.On("List", mock.Anything, 1, 20, mock.Anything).Return(users, int64(2), nil)
 
 	r := gin.New()
 	r.GET("/admin/users", func(c *gin.Context) {
@@ -488,7 +488,7 @@ func TestListUsersHandler_Success(t *testing.T) {
 func TestListUsersHandler_DefaultPagination(t *testing.T) {
 	s := newHandlerSetup(t)
 
-	s.repo.On("List", 1, 20, mock.Anything).Return([]models.User{}, int64(0), nil)
+	s.repo.On("List", mock.Anything, 1, 20, mock.Anything).Return([]models.User{}, int64(0), nil)
 
 	r := gin.New()
 	r.GET("/admin/users", func(c *gin.Context) {
@@ -500,7 +500,7 @@ func TestListUsersHandler_DefaultPagination(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	s.repo.AssertCalled(t, "List", 1, 20, mock.Anything)
+	s.repo.AssertCalled(t, "List", mock.Anything, 1, 20, mock.Anything)
 }
 
 // ─── SetUserRole ──────────────────────────────────────────────────────────────
@@ -509,8 +509,8 @@ func TestSetUserRoleHandler_Success(t *testing.T) {
 	s := newHandlerSetup(t)
 
 	user := &models.User{ID: 5, Email: "user@example.com", Role: models.RoleUser, Active: true}
-	s.repo.On("FindByID", uint(5)).Return(user, nil)
-	s.repo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
+	s.repo.On("FindByID", mock.Anything, uint(5)).Return(user, nil)
+	s.repo.On("Update", mock.Anything, mock.AnythingOfType("*models.User")).Return(nil)
 
 	r := gin.New()
 	r.PUT("/admin/users/:id/role", s.handler.SetUserRole)
@@ -560,7 +560,7 @@ func TestSetUserRoleHandler_InvalidRole(t *testing.T) {
 func TestSetUserRoleHandler_NotFound(t *testing.T) {
 	s := newHandlerSetup(t)
 
-	s.repo.On("FindByID", uint(99)).Return(nil, errors.New("not found"))
+	s.repo.On("FindByID", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
 
 	r := gin.New()
 	r.PUT("/admin/users/:id/role", s.handler.SetUserRole)
@@ -640,7 +640,7 @@ func TestListUsersCursorHandler_FirstPage(t *testing.T) {
 		{ID: 2, Email: "b@example.com", Role: models.RoleUser, Active: true},
 	}
 	// limit=2, so repo is called with limit+1=3; returns 2 → no next page
-	s.repo.On("ListCursor", uint(0), 3, mock.Anything).Return(users, nil)
+	s.repo.On("ListCursor", mock.Anything, uint(0), 3, mock.Anything).Return(users, nil)
 
 	r := gin.New()
 	r.GET("/admin/users/cursor", s.handler.ListUsersCursor)
@@ -667,7 +667,7 @@ func TestListUsersCursorHandler_HasNextPage(t *testing.T) {
 		{ID: 2, Email: "b@example.com", Role: models.RoleUser, Active: true},
 		{ID: 3, Email: "c@example.com", Role: models.RoleUser, Active: true},
 	}
-	s.repo.On("ListCursor", uint(0), 3, mock.Anything).Return(users, nil)
+	s.repo.On("ListCursor", mock.Anything, uint(0), 3, mock.Anything).Return(users, nil)
 
 	r := gin.New()
 	r.GET("/admin/users/cursor", s.handler.ListUsersCursor)
@@ -692,7 +692,7 @@ func TestListUsersCursorHandler_WithCursor(t *testing.T) {
 	users := []models.User{
 		{ID: 6, Email: "f@example.com", Role: models.RoleUser, Active: true},
 	}
-	s.repo.On("ListCursor", uint(5), 21, mock.Anything).Return(users, nil)
+	s.repo.On("ListCursor", mock.Anything, uint(5), 21, mock.Anything).Return(users, nil)
 
 	r := gin.New()
 	r.GET("/admin/users/cursor", s.handler.ListUsersCursor)
@@ -726,7 +726,7 @@ func TestListUsersCursorHandler_DefaultLimit(t *testing.T) {
 	s := newHandlerSetup(t)
 
 	// No limit param → default 20 → repo called with 21
-	s.repo.On("ListCursor", uint(0), 21, mock.Anything).Return([]models.User{}, nil)
+	s.repo.On("ListCursor", mock.Anything, uint(0), 21, mock.Anything).Return([]models.User{}, nil)
 
 	r := gin.New()
 	r.GET("/admin/users/cursor", s.handler.ListUsersCursor)
@@ -736,14 +736,14 @@ func TestListUsersCursorHandler_DefaultLimit(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	s.repo.AssertCalled(t, "ListCursor", uint(0), 21, mock.Anything)
+	s.repo.AssertCalled(t, "ListCursor", mock.Anything, uint(0), 21, mock.Anything)
 }
 
 func TestListUsersCursorHandler_LimitClamped(t *testing.T) {
 	s := newHandlerSetup(t)
 
 	// limit=0 → clamped to default 20
-	s.repo.On("ListCursor", uint(0), 21, mock.Anything).Return([]models.User{}, nil)
+	s.repo.On("ListCursor", mock.Anything, uint(0), 21, mock.Anything).Return([]models.User{}, nil)
 
 	r := gin.New()
 	r.GET("/admin/users/cursor", s.handler.ListUsersCursor)
@@ -753,7 +753,7 @@ func TestListUsersCursorHandler_LimitClamped(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	s.repo.AssertCalled(t, "ListCursor", uint(0), 21, mock.Anything)
+	s.repo.AssertCalled(t, "ListCursor", mock.Anything, uint(0), 21, mock.Anything)
 }
 
 func TestListUsersCursorHandler_NextCursorIsDecodable(t *testing.T) {
@@ -764,7 +764,7 @@ func TestListUsersCursorHandler_NextCursorIsDecodable(t *testing.T) {
 		{ID: 11, Email: "y@example.com", Role: models.RoleUser, Active: true},
 	}
 	// limit=1, repo receives 2; returns 2 → has_next=true, next_cursor encodes ID 10
-	s.repo.On("ListCursor", uint(0), 2, mock.Anything).Return(users, nil)
+	s.repo.On("ListCursor", mock.Anything, uint(0), 2, mock.Anything).Return(users, nil)
 
 	r := gin.New()
 	r.GET("/admin/users/cursor", s.handler.ListUsersCursor)
@@ -790,7 +790,7 @@ func TestListUsersHandler_FilterByRole(t *testing.T) {
 	users := []models.User{
 		{ID: 1, Email: "admin@example.com", Role: models.RoleAdmin, Active: true},
 	}
-	s.repo.On("List", 1, 20, filtering.Options{
+	s.repo.On("List", mock.Anything, 1, 20, filtering.Options{
 		Sort: "id", Order: filtering.OrderAsc,
 		Filters: map[string]string{"role": "admin"},
 	}).Return(users, int64(1), nil)
@@ -809,7 +809,7 @@ func TestListUsersHandler_FilterByRole(t *testing.T) {
 func TestListUsersHandler_SortByEmail(t *testing.T) {
 	s := newHandlerSetup(t)
 
-	s.repo.On("List", 1, 20, filtering.Options{
+	s.repo.On("List", mock.Anything, 1, 20, filtering.Options{
 		Sort: "email", Order: filtering.OrderDesc,
 		Filters: map[string]string{},
 	}).Return([]models.User{}, int64(0), nil)
@@ -829,7 +829,7 @@ func TestListUsersHandler_InvalidSortFallsBackToDefault(t *testing.T) {
 	s := newHandlerSetup(t)
 
 	// unknown sort → falls back to "id"
-	s.repo.On("List", 1, 20, filtering.Options{
+	s.repo.On("List", mock.Anything, 1, 20, filtering.Options{
 		Sort: "id", Order: filtering.OrderAsc,
 		Filters: map[string]string{},
 	}).Return([]models.User{}, int64(0), nil)
@@ -849,7 +849,7 @@ func TestListUsersHandler_UnknownFilterIgnored(t *testing.T) {
 	s := newHandlerSetup(t)
 
 	// unknown filter key → silently dropped, no filter applied
-	s.repo.On("List", 1, 20, filtering.Options{
+	s.repo.On("List", mock.Anything, 1, 20, filtering.Options{
 		Sort: "id", Order: filtering.OrderAsc,
 		Filters: map[string]string{},
 	}).Return([]models.User{}, int64(0), nil)
@@ -872,7 +872,7 @@ func TestForgotPasswordHandler(t *testing.T) {
 	u := &models.User{Email: "forgot@example.com", FirstName: "Foo", LastName: "Bar"}
 	u.ID = 7
 	require.NoError(t, u.SetPassword("password123"))
-	s.repo.On("FindByEmail", "forgot@example.com").Return(u, nil)
+	s.repo.On("FindByEmail", mock.Anything, "forgot@example.com").Return(u, nil)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/auth/forgot-password", jsonBody(t, map[string]string{"email": "forgot@example.com"}))
@@ -917,7 +917,7 @@ func TestListUsersCursorHandler_FilterByActive(t *testing.T) {
 	users := []models.User{
 		{ID: 1, Email: "active@example.com", Role: models.RoleUser, Active: true},
 	}
-	s.repo.On("ListCursor", uint(0), 21, filtering.Options{
+	s.repo.On("ListCursor", mock.Anything, uint(0), 21, filtering.Options{
 		Sort: "id", Order: filtering.OrderAsc,
 		Filters: map[string]string{"active": "true"},
 	}).Return(users, nil)
@@ -959,8 +959,8 @@ func TestResetPasswordHandler_Success(t *testing.T) {
 
 	user := &models.User{ID: 1, Email: "user@example.com", Active: true, Role: models.RoleUser}
 	require.NoError(t, user.SetPassword("oldpassword1"))
-	s.repo.On("FindByID", uint(1)).Return(user, nil)
-	s.repo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
+	s.repo.On("FindByID", mock.Anything, uint(1)).Return(user, nil)
+	s.repo.On("Update", mock.Anything, mock.AnythingOfType("*models.User")).Return(nil)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/auth/reset-password", jsonBody(t, map[string]string{
@@ -992,7 +992,7 @@ func TestResetPasswordHandler_InvalidBody(t *testing.T) {
 func TestUpdateProfileHandler_Error(t *testing.T) {
 	s := newHandlerSetup(t)
 
-	s.repo.On("FindByID", uint(99)).Return(nil, errors.New("not found"))
+	s.repo.On("FindByID", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
 
 	r := gin.New()
 	r.PUT("/profile", func(c *gin.Context) {
@@ -1017,7 +1017,7 @@ func TestChangePasswordHandler_InternalError(t *testing.T) {
 	s := newHandlerSetup(t)
 
 	// FindByID fails → service returns ErrUserNotFound → handler default: InternalError.
-	s.repo.On("FindByID", uint(1)).Return(nil, errors.New("db error"))
+	s.repo.On("FindByID", mock.Anything, uint(1)).Return(nil, errors.New("db error"))
 
 	r := gin.New()
 	r.PUT("/password", func(c *gin.Context) {

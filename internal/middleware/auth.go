@@ -28,7 +28,7 @@ func AuthRequired(jwtManager *auth.JWTManager, authService *services.AuthService
 
 		token := parts[1]
 
-		if authService.IsTokenBlacklisted(token) {
+		if authService.IsTokenBlacklisted(c.Request.Context(), token) {
 			response.Unauthorized(c, "token has been revoked")
 			c.Abort()
 			return

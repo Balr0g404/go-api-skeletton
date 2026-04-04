@@ -1,6 +1,7 @@
 package services_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/Balr0g404/go-api-skeletton/internal/mocks"
 	"github.com/Balr0g404/go-api-skeletton/internal/models"
@@ -32,18 +34,20 @@ func newTestService(t *testing.T, repo *mocks.UserRepository) (*services.AuthSer
 	return services.NewAuthService(repo, jwt, client, mailer, "http://localhost:8080"), mr
 }
 
+// ─── Register ────────────────────────────────────────────────────────────────
+
 func TestRegister_Success(t *testing.T) {
 	repo := &mocks.UserRepository{}
 	svc, _ := newTestService(t, repo)
 
-	repo.On("ExistsByEmail", "test@example.com").Return(false)
-	repo.On("Create", mock.AnythingOfType("*models.User")).
+	repo.On("ExistsByEmail", mock.Anything, "test@example.com").Return(false)
+	repo.On("Create", mock.Anything, mock.AnythingOfType("*models.User")).
 		Run(func(args mock.Arguments) {
-			args.Get(0).(*models.User).ID = 1
+			args.Get(1).(*models.User).ID = 1
 		}).
 		Return(nil)
 
-	user, tokens, err := svc.Register(services.RegisterInput{
+	user, tokens, err := svc.Register(context.Background(), services.RegisterInput{
 		Email:     "test@example.com",
 		Password:  "password123",
 		FirstName: "Test",
@@ -61,9 +65,9 @@ func TestRegister_EmailAlreadyExists(t *testing.T) {
 	repo := &mocks.UserRepository{}
 	svc, _ := newTestService(t, repo)
 
-	repo.On("ExistsByEmail", "test@example.com").Return(true)
+	repo.On("ExistsByEmail", mock.Anything, "test@example.com").Return(true)
 
-	_, _, err := svc.Register(services.RegisterInput{
+	_, _, err := svc.Register(context.Background(), services.RegisterInput{
 		Email:    "test@example.com",
 		Password: "password123",
 	})
@@ -72,6 +76,29 @@ func TestRegister_EmailAlreadyExists(t *testing.T) {
 	repo.AssertExpectations(t)
 }
 
+// TestRegister_UniqueConstraintViolation vérifie que la violation de contrainte
+// unique retournée par la DB (race condition) est correctement mappée.
+func TestRegister_UniqueConstraintViolation(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, _ := newTestService(t, repo)
+
+	repo.On("ExistsByEmail", mock.Anything, "race@example.com").Return(false)
+	repo.On("Create", mock.Anything, mock.AnythingOfType("*models.User")).
+		Return(gorm.ErrDuplicatedKey)
+
+	_, _, err := svc.Register(context.Background(), services.RegisterInput{
+		Email:     "race@example.com",
+		Password:  "password123",
+		FirstName: "A",
+		LastName:  "B",
+	})
+
+	assert.ErrorIs(t, err, services.ErrEmailAlreadyExists)
+	repo.AssertExpectations(t)
+}
+
+// ─── Login ────────────────────────────────────────────────────────────────────
+
 func TestLogin_Success(t *testing.T) {
 	repo := &mocks.UserRepository{}
 	svc, _ := newTestService(t, repo)
@@ -79,9 +106,9 @@ func TestLogin_Success(t *testing.T) {
 	u := testutil.NewUserWithPassword(t, "password123")
 	u.ID = 1
 
-	repo.On("FindByEmail", u.Email).Return(u, nil)
+	repo.On("FindByEmail", mock.Anything, u.Email).Return(u, nil)
 
-	user, tokens, err := svc.Login(services.LoginInput{
+	user, tokens, err := svc.Login(context.Background(), services.LoginInput{
 		Email:    u.Email,
 		Password: "password123",
 	})
@@ -96,9 +123,9 @@ func TestLogin_InvalidCredentials(t *testing.T) {
 	repo := &mocks.UserRepository{}
 	svc, _ := newTestService(t, repo)
 
-	repo.On("FindByEmail", "unknown@example.com").Return(nil, errors.New("not found"))
+	repo.On("FindByEmail", mock.Anything, "unknown@example.com").Return(nil, errors.New("not found"))
 
-	_, _, err := svc.Login(services.LoginInput{
+	_, _, err := svc.Login(context.Background(), services.LoginInput{
 		Email:    "unknown@example.com",
 		Password: "password123",
 	})
@@ -114,9 +141,9 @@ func TestLogin_WrongPassword(t *testing.T) {
 	u := testutil.NewUserWithPassword(t, "correct-password")
 	u.ID = 1
 
-	repo.On("FindByEmail", u.Email).Return(u, nil)
+	repo.On("FindByEmail", mock.Anything, u.Email).Return(u, nil)
 
-	_, _, err := svc.Login(services.LoginInput{
+	_, _, err := svc.Login(context.Background(), services.LoginInput{
 		Email:    u.Email,
 		Password: "wrong-password",
 	})
@@ -134,9 +161,9 @@ func TestLogin_AccountDisabled(t *testing.T) {
 	})
 	u.ID = 1
 
-	repo.On("FindByEmail", u.Email).Return(u, nil)
+	repo.On("FindByEmail", mock.Anything, u.Email).Return(u, nil)
 
-	_, _, err := svc.Login(services.LoginInput{
+	_, _, err := svc.Login(context.Background(), services.LoginInput{
 		Email:    u.Email,
 		Password: "password123",
 	})
@@ -144,6 +171,8 @@ func TestLogin_AccountDisabled(t *testing.T) {
 	assert.ErrorIs(t, err, services.ErrAccountDisabled)
 	repo.AssertExpectations(t)
 }
+
+// ─── RefreshTokens ────────────────────────────────────────────────────────────
 
 func TestRefreshTokens_Success(t *testing.T) {
 	repo := &mocks.UserRepository{}
@@ -156,9 +185,9 @@ func TestRefreshTokens_Success(t *testing.T) {
 	tokens, err := jwtManager.GenerateTokenPair(u.ID, u.Email, string(u.Role))
 	require.NoError(t, err)
 
-	repo.On("FindByID", u.ID).Return(u, nil)
+	repo.On("FindByID", mock.Anything, u.ID).Return(u, nil)
 
-	newTokens, err := svc.RefreshTokens(services.RefreshInput{RefreshToken: tokens.RefreshToken})
+	newTokens, err := svc.RefreshTokens(context.Background(), services.RefreshInput{RefreshToken: tokens.RefreshToken})
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, newTokens.AccessToken)
@@ -176,10 +205,30 @@ func TestRefreshTokens_BlacklistedToken(t *testing.T) {
 
 	mr.Set("blacklist:"+tokens.RefreshToken, "1")
 
-	_, err = svc.RefreshTokens(services.RefreshInput{RefreshToken: tokens.RefreshToken})
+	_, err = svc.RefreshTokens(context.Background(), services.RefreshInput{RefreshToken: tokens.RefreshToken})
 
 	assert.ErrorIs(t, err, services.ErrTokenBlacklisted)
 }
+
+func TestRefreshTokens_AccountDisabled(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, _ := newTestService(t, repo)
+
+	jwtManager := auth.NewJWTManager("test-secret", 1, 24)
+	tokens, err := jwtManager.GenerateTokenPair(1, "test@example.com", "user")
+	require.NoError(t, err)
+
+	u := testutil.NewUser(t)
+	u.ID = 1
+	u.Active = false
+	repo.On("FindByID", mock.Anything, uint(1)).Return(u, nil)
+
+	_, err = svc.RefreshTokens(context.Background(), services.RefreshInput{RefreshToken: tokens.RefreshToken})
+	assert.ErrorIs(t, err, services.ErrAccountDisabled)
+	repo.AssertExpectations(t)
+}
+
+// ─── Logout ───────────────────────────────────────────────────────────────────
 
 func TestLogout_BlacklistsBothTokens(t *testing.T) {
 	repo := &mocks.UserRepository{}
@@ -189,11 +238,13 @@ func TestLogout_BlacklistsBothTokens(t *testing.T) {
 	tokens, err := jwtManager.GenerateTokenPair(1, "test@example.com", "user")
 	require.NoError(t, err)
 
-	svc.Logout(tokens.AccessToken, tokens.RefreshToken)
+	svc.Logout(context.Background(), tokens.AccessToken, tokens.RefreshToken)
 
 	assert.True(t, mr.Exists("blacklist:"+tokens.AccessToken))
 	assert.True(t, mr.Exists("blacklist:"+tokens.RefreshToken))
 }
+
+// ─── GetProfile ───────────────────────────────────────────────────────────────
 
 func TestGetProfile_Success(t *testing.T) {
 	repo := &mocks.UserRepository{}
@@ -202,9 +253,9 @@ func TestGetProfile_Success(t *testing.T) {
 	u := testutil.NewUser(t)
 	u.ID = 1
 
-	repo.On("FindByID", uint(1)).Return(u, nil)
+	repo.On("FindByID", mock.Anything, uint(1)).Return(u, nil)
 
-	profile, err := svc.GetProfile(1)
+	profile, err := svc.GetProfile(context.Background(), 1)
 
 	require.NoError(t, err)
 	assert.Equal(t, u.Email, profile.Email)
@@ -215,13 +266,15 @@ func TestGetProfile_NotFound(t *testing.T) {
 	repo := &mocks.UserRepository{}
 	svc, _ := newTestService(t, repo)
 
-	repo.On("FindByID", uint(99)).Return(nil, errors.New("not found"))
+	repo.On("FindByID", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
 
-	_, err := svc.GetProfile(99)
+	_, err := svc.GetProfile(context.Background(), 99)
 
 	assert.ErrorIs(t, err, services.ErrUserNotFound)
 	repo.AssertExpectations(t)
 }
+
+// ─── UpdateProfile ────────────────────────────────────────────────────────────
 
 func TestUpdateProfile_Success(t *testing.T) {
 	repo := &mocks.UserRepository{}
@@ -230,10 +283,10 @@ func TestUpdateProfile_Success(t *testing.T) {
 	u := testutil.NewUser(t)
 	u.ID = 1
 
-	repo.On("FindByID", uint(1)).Return(u, nil)
-	repo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
+	repo.On("FindByID", mock.Anything, uint(1)).Return(u, nil)
+	repo.On("Update", mock.Anything, mock.AnythingOfType("*models.User")).Return(nil)
 
-	profile, err := svc.UpdateProfile(1, services.UpdateProfileInput{
+	profile, err := svc.UpdateProfile(context.Background(), 1, services.UpdateProfileInput{
 		FirstName: "Updated",
 		LastName:  "Name",
 	})
@@ -244,6 +297,8 @@ func TestUpdateProfile_Success(t *testing.T) {
 	repo.AssertExpectations(t)
 }
 
+// ─── ChangePassword ───────────────────────────────────────────────────────────
+
 func TestChangePassword_Success(t *testing.T) {
 	repo := &mocks.UserRepository{}
 	svc, _ := newTestService(t, repo)
@@ -251,10 +306,10 @@ func TestChangePassword_Success(t *testing.T) {
 	u := testutil.NewUserWithPassword(t, "old-password")
 	u.ID = 1
 
-	repo.On("FindByID", uint(1)).Return(u, nil)
-	repo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
+	repo.On("FindByID", mock.Anything, uint(1)).Return(u, nil)
+	repo.On("Update", mock.Anything, mock.AnythingOfType("*models.User")).Return(nil)
 
-	err := svc.ChangePassword(1, services.ChangePasswordInput{
+	err := svc.ChangePassword(context.Background(), 1, services.ChangePasswordInput{
 		CurrentPassword: "old-password",
 		NewPassword:     "new-password",
 	})
@@ -271,9 +326,9 @@ func TestChangePassword_WrongCurrentPassword(t *testing.T) {
 	u := testutil.NewUserWithPassword(t, "correct-password")
 	u.ID = 1
 
-	repo.On("FindByID", uint(1)).Return(u, nil)
+	repo.On("FindByID", mock.Anything, uint(1)).Return(u, nil)
 
-	err := svc.ChangePassword(1, services.ChangePasswordInput{
+	err := svc.ChangePassword(context.Background(), 1, services.ChangePasswordInput{
 		CurrentPassword: "wrong-password",
 		NewPassword:     "new-password",
 	})
@@ -281,6 +336,8 @@ func TestChangePassword_WrongCurrentPassword(t *testing.T) {
 	assert.ErrorIs(t, err, services.ErrInvalidCredentials)
 	repo.AssertExpectations(t)
 }
+
+// ─── ListUsers ────────────────────────────────────────────────────────────────
 
 func TestListUsers_Success(t *testing.T) {
 	repo := &mocks.UserRepository{}
@@ -291,15 +348,41 @@ func TestListUsers_Success(t *testing.T) {
 		*testutil.NewUser(t, testutil.UniqueEmail("user2")),
 	}
 
-	repo.On("List", 1, 20, mock.Anything).Return(users, int64(2), nil)
+	repo.On("List", mock.Anything, 1, 20, mock.Anything).Return(users, int64(2), nil)
 
-	result, total, err := svc.ListUsers(1, 20, filtering.Options{})
+	result, total, err := svc.ListUsers(context.Background(), 1, 20, filtering.Options{})
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), total)
 	assert.Len(t, result, 2)
 	repo.AssertExpectations(t)
 }
+
+func TestListUsers_WithFilter(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, _ := newTestService(t, repo)
+
+	opts := filtering.Options{
+		Sort:    "email",
+		Order:   filtering.OrderAsc,
+		Filters: map[string]string{"role": "admin"},
+	}
+
+	users := []models.User{
+		{ID: 1, Email: "admin@example.com", Role: models.RoleAdmin, Active: true},
+	}
+	repo.On("List", mock.Anything, 1, 20, opts).Return(users, int64(1), nil)
+
+	result, total, err := svc.ListUsers(context.Background(), 1, 20, opts)
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), total)
+	assert.Len(t, result, 1)
+	assert.Equal(t, models.RoleAdmin, result[0].Role)
+	repo.AssertExpectations(t)
+}
+
+// ─── SetUserRole ──────────────────────────────────────────────────────────────
 
 func TestSetUserRole_Success(t *testing.T) {
 	repo := &mocks.UserRepository{}
@@ -308,10 +391,10 @@ func TestSetUserRole_Success(t *testing.T) {
 	u := testutil.NewUser(t)
 	u.ID = 1
 
-	repo.On("FindByID", uint(1)).Return(u, nil)
-	repo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
+	repo.On("FindByID", mock.Anything, uint(1)).Return(u, nil)
+	repo.On("Update", mock.Anything, mock.AnythingOfType("*models.User")).Return(nil)
 
-	result, err := svc.SetUserRole(1, models.RoleAdmin)
+	result, err := svc.SetUserRole(context.Background(), 1, models.RoleAdmin)
 
 	require.NoError(t, err)
 	assert.Equal(t, models.RoleAdmin, result.Role)
@@ -322,9 +405,9 @@ func TestSetUserRole_NotFound(t *testing.T) {
 	repo := &mocks.UserRepository{}
 	svc, _ := newTestService(t, repo)
 
-	repo.On("FindByID", uint(99)).Return(nil, errors.New("not found"))
+	repo.On("FindByID", mock.Anything, uint(99)).Return(nil, errors.New("not found"))
 
-	_, err := svc.SetUserRole(99, models.RoleAdmin)
+	_, err := svc.SetUserRole(context.Background(), 99, models.RoleAdmin)
 
 	assert.ErrorIs(t, err, services.ErrUserNotFound)
 	repo.AssertExpectations(t)
@@ -341,9 +424,9 @@ func TestListUsersCursor_FirstPage(t *testing.T) {
 		{ID: 2, Email: "b@example.com", Role: models.RoleUser, Active: true},
 	}
 	// limit=2, service fetches limit+1=3; returns 2 → no next page
-	repo.On("ListCursor", uint(0), 3, mock.Anything).Return(users, nil)
+	repo.On("ListCursor", mock.Anything, uint(0), 3, mock.Anything).Return(users, nil)
 
-	result, nextCursor, hasNext, err := svc.ListUsersCursor("", 2, filtering.Options{})
+	result, nextCursor, hasNext, err := svc.ListUsersCursor(context.Background(), "", 2, filtering.Options{})
 
 	require.NoError(t, err)
 	assert.Len(t, result, 2)
@@ -362,15 +445,14 @@ func TestListUsersCursor_HasNextPage(t *testing.T) {
 		{ID: 2, Email: "b@example.com", Role: models.RoleUser, Active: true},
 		{ID: 3, Email: "c@example.com", Role: models.RoleUser, Active: true},
 	}
-	repo.On("ListCursor", uint(0), 3, mock.Anything).Return(users, nil)
+	repo.On("ListCursor", mock.Anything, uint(0), 3, mock.Anything).Return(users, nil)
 
-	result, nextCursor, hasNext, err := svc.ListUsersCursor("", 2, filtering.Options{})
+	result, nextCursor, hasNext, err := svc.ListUsersCursor(context.Background(), "", 2, filtering.Options{})
 
 	require.NoError(t, err)
 	assert.Len(t, result, 2)
 	assert.True(t, hasNext)
 	assert.NotEmpty(t, nextCursor)
-	// next cursor should encode ID 2 (last item returned)
 	assert.Equal(t, uint(2), result[len(result)-1].ID)
 }
 
@@ -378,7 +460,7 @@ func TestListUsersCursor_InvalidCursor(t *testing.T) {
 	repo := &mocks.UserRepository{}
 	svc, _ := newTestService(t, repo)
 
-	_, _, _, err := svc.ListUsersCursor("!!!invalid!!!", 20, filtering.Options{})
+	_, _, _, err := svc.ListUsersCursor(context.Background(), "!!!invalid!!!", 20, filtering.Options{})
 
 	assert.Error(t, err)
 	repo.AssertNotCalled(t, "ListCursor")
@@ -388,40 +470,14 @@ func TestListUsersCursor_EmptyResult(t *testing.T) {
 	repo := &mocks.UserRepository{}
 	svc, _ := newTestService(t, repo)
 
-	repo.On("ListCursor", uint(0), 21, mock.Anything).Return([]models.User{}, nil)
+	repo.On("ListCursor", mock.Anything, uint(0), 21, mock.Anything).Return([]models.User{}, nil)
 
-	result, nextCursor, hasNext, err := svc.ListUsersCursor("", 20, filtering.Options{})
+	result, nextCursor, hasNext, err := svc.ListUsersCursor(context.Background(), "", 20, filtering.Options{})
 
 	require.NoError(t, err)
 	assert.Empty(t, result)
 	assert.False(t, hasNext)
 	assert.Empty(t, nextCursor)
-}
-
-// ─── ListUsers with filtering ────────────────────────────────────────────────
-
-func TestListUsers_WithFilter(t *testing.T) {
-	repo := &mocks.UserRepository{}
-	svc, _ := newTestService(t, repo)
-
-	opts := filtering.Options{
-		Sort:    "email",
-		Order:   filtering.OrderAsc,
-		Filters: map[string]string{"role": "admin"},
-	}
-
-	users := []models.User{
-		{ID: 1, Email: "admin@example.com", Role: models.RoleAdmin, Active: true},
-	}
-	repo.On("List", 1, 20, opts).Return(users, int64(1), nil)
-
-	result, total, err := svc.ListUsers(1, 20, opts)
-
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), total)
-	assert.Len(t, result, 1)
-	assert.Equal(t, models.RoleAdmin, result[0].Role)
-	repo.AssertExpectations(t)
 }
 
 func TestListUsersCursor_WithFilter(t *testing.T) {
@@ -437,9 +493,9 @@ func TestListUsersCursor_WithFilter(t *testing.T) {
 	users := []models.User{
 		{ID: 3, Email: "active@example.com", Role: models.RoleUser, Active: true},
 	}
-	repo.On("ListCursor", uint(0), 21, opts).Return(users, nil)
+	repo.On("ListCursor", mock.Anything, uint(0), 21, opts).Return(users, nil)
 
-	result, _, hasNext, err := svc.ListUsersCursor("", 20, opts)
+	result, _, hasNext, err := svc.ListUsersCursor(context.Background(), "", 20, opts)
 
 	require.NoError(t, err)
 	assert.False(t, hasNext)
@@ -455,9 +511,9 @@ func TestForgotPassword_UserExists(t *testing.T) {
 
 	u := testutil.NewUser(t, testutil.UniqueEmail("reset"))
 	u.ID = 5
-	repo.On("FindByEmail", u.Email).Return(u, nil)
+	repo.On("FindByEmail", mock.Anything, u.Email).Return(u, nil)
 
-	err := svc.ForgotPassword(services.ForgotPasswordInput{Email: u.Email})
+	err := svc.ForgotPassword(context.Background(), services.ForgotPasswordInput{Email: u.Email})
 	assert.NoError(t, err)
 	// token should be stored in Redis
 	keys := mr.Keys()
@@ -475,9 +531,9 @@ func TestForgotPassword_UserNotFound(t *testing.T) {
 	repo := &mocks.UserRepository{}
 	svc, _ := newTestService(t, repo)
 
-	repo.On("FindByEmail", "ghost@example.com").Return(nil, errors.New("not found"))
+	repo.On("FindByEmail", mock.Anything, "ghost@example.com").Return(nil, errors.New("not found"))
 
-	err := svc.ForgotPassword(services.ForgotPasswordInput{Email: "ghost@example.com"})
+	err := svc.ForgotPassword(context.Background(), services.ForgotPasswordInput{Email: "ghost@example.com"})
 	assert.NoError(t, err) // always nil for security
 	repo.AssertExpectations(t)
 }
@@ -492,10 +548,10 @@ func TestResetPassword_ValidToken(t *testing.T) {
 
 	u := testutil.NewUserWithPassword(t, "oldpass", testutil.UniqueEmail("someone"))
 	u.ID = 42
-	repo.On("FindByID", uint(42)).Return(u, nil)
-	repo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
+	repo.On("FindByID", mock.Anything, uint(42)).Return(u, nil)
+	repo.On("Update", mock.Anything, mock.AnythingOfType("*models.User")).Return(nil)
 
-	err := svc.ResetPassword(services.ResetPasswordInput{Token: "validtoken123", Password: "newpassword123"})
+	err := svc.ResetPassword(context.Background(), services.ResetPasswordInput{Token: "validtoken123", Password: "newpassword123"})
 	assert.NoError(t, err)
 
 	// token should be deleted
@@ -507,7 +563,7 @@ func TestResetPassword_InvalidToken(t *testing.T) {
 	repo := &mocks.UserRepository{}
 	svc, _ := newTestService(t, repo)
 
-	err := svc.ResetPassword(services.ResetPasswordInput{Token: "badtoken", Password: "newpass123"})
+	err := svc.ResetPassword(context.Background(), services.ResetPasswordInput{Token: "badtoken", Password: "newpass123"})
 	assert.ErrorIs(t, err, services.ErrInvalidResetToken)
 }
 
@@ -518,7 +574,7 @@ func TestResetPassword_CorruptTokenData(t *testing.T) {
 
 	mr.Set("pwd_reset:corrupttoken", "not-a-number")
 
-	err := svc.ResetPassword(services.ResetPasswordInput{Token: "corrupttoken", Password: "newpass123"})
+	err := svc.ResetPassword(context.Background(), services.ResetPasswordInput{Token: "corrupttoken", Password: "newpass123"})
 	assert.ErrorIs(t, err, services.ErrInvalidResetToken)
 }
 
@@ -527,9 +583,9 @@ func TestResetPassword_UserNotFoundAfterToken(t *testing.T) {
 	svc, mr := newTestService(t, repo)
 
 	mr.Set("pwd_reset:mytoken", "999")
-	repo.On("FindByID", uint(999)).Return(nil, errors.New("not found"))
+	repo.On("FindByID", mock.Anything, uint(999)).Return(nil, errors.New("not found"))
 
-	err := svc.ResetPassword(services.ResetPasswordInput{Token: "mytoken", Password: "newpass123"})
+	err := svc.ResetPassword(context.Background(), services.ResetPasswordInput{Token: "mytoken", Password: "newpass123"})
 	assert.Error(t, err)
 	repo.AssertExpectations(t)
 }
@@ -541,21 +597,21 @@ func TestResetPassword_UpdateFails(t *testing.T) {
 	mr.Set("pwd_reset:mytoken", "42")
 	u := testutil.NewUserWithPassword(t, "oldpass", testutil.UniqueEmail("updfail"))
 	u.ID = 42
-	repo.On("FindByID", uint(42)).Return(u, nil)
-	repo.On("Update", mock.AnythingOfType("*models.User")).Return(errors.New("db error"))
+	repo.On("FindByID", mock.Anything, uint(42)).Return(u, nil)
+	repo.On("Update", mock.Anything, mock.AnythingOfType("*models.User")).Return(errors.New("db error"))
 
-	err := svc.ResetPassword(services.ResetPasswordInput{Token: "mytoken", Password: "newpassword123"})
+	err := svc.ResetPassword(context.Background(), services.ResetPasswordInput{Token: "mytoken", Password: "newpassword123"})
 	assert.Error(t, err)
 	repo.AssertExpectations(t)
 }
 
-// ─── IsTokenBlacklisted ───────────────────────────────────────────────────
+// ─── IsTokenBlacklisted ───────────────────────────────────────────────────────
 
 func TestIsTokenBlacklisted_False(t *testing.T) {
 	repo := &mocks.UserRepository{}
 	svc, _ := newTestService(t, repo)
 
-	assert.False(t, svc.IsTokenBlacklisted("some-token"))
+	assert.False(t, svc.IsTokenBlacklisted(context.Background(), "some-token"))
 }
 
 func TestIsTokenBlacklisted_True(t *testing.T) {
@@ -564,25 +620,63 @@ func TestIsTokenBlacklisted_True(t *testing.T) {
 
 	mr.Set("blacklist:some-token", "1")
 
-	assert.True(t, svc.IsTokenBlacklisted("some-token"))
+	assert.True(t, svc.IsTokenBlacklisted(context.Background(), "some-token"))
 }
 
-// ─── RefreshTokens — missing branch ──────────────────────────────────────
+// ─── Redis resilience (fail-closed) ──────────────────────────────────────────
 
-func TestRefreshTokens_AccountDisabled(t *testing.T) {
+// TestIsTokenBlacklisted_RedisUnavailable_DeniesAccess vérifie le comportement
+// fail-closed : si Redis est KO, l'accès est refusé (retourne true) plutôt que
+// d'autoriser potentiellement un token révoqué.
+func TestIsTokenBlacklisted_RedisUnavailable_DeniesAccess(t *testing.T) {
 	repo := &mocks.UserRepository{}
-	svc, _ := newTestService(t, repo)
+	svc, mr := newTestService(t, repo)
 
-	jwtManager := auth.NewJWTManager("test-secret", 1, 24)
-	tokens, err := jwtManager.GenerateTokenPair(1, "test@example.com", "user")
+	mr.Close() // Simule une panne Redis
+
+	result := svc.IsTokenBlacklisted(context.Background(), "any-token")
+	assert.True(t, result, "doit refuser l'accès quand Redis est indisponible (fail-closed)")
+}
+
+// TestForgotPassword_RedisUnavailable_DoesNotSendEmail vérifie que l'email de
+// réinitialisation n'est PAS envoyé si Redis est KO (on ne peut pas stocker le token).
+func TestForgotPassword_RedisUnavailable_DoesNotSendEmail(t *testing.T) {
+	mr, err := miniredis.Run()
 	require.NoError(t, err)
 
-	u := testutil.NewUser(t)
-	u.ID = 1
-	u.Active = false
-	repo.On("FindByID", uint(1)).Return(u, nil)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	jwtManager := auth.NewJWTManager("test-secret", 1, 24)
+	repo := &mocks.UserRepository{}
+	mailer := &mocks.EmailSender{} // pas de On("Send") : tout appel sera enregistré
 
-	_, err = svc.RefreshTokens(services.RefreshInput{RefreshToken: tokens.RefreshToken})
-	assert.ErrorIs(t, err, services.ErrAccountDisabled)
+	svc := services.NewAuthService(repo, jwtManager, client, mailer, "http://localhost")
+
+	u := testutil.NewUser(t, testutil.UniqueEmail("redis-down"))
+	u.ID = 77
+	repo.On("FindByEmail", mock.Anything, u.Email).Return(u, nil)
+
+	mr.Close() // Simule une panne Redis avant l'appel
+
+	result := svc.ForgotPassword(context.Background(), services.ForgotPasswordInput{Email: u.Email})
+	require.NoError(t, result)
+
+	mailer.AssertNotCalled(t, "Send")
 	repo.AssertExpectations(t)
+}
+
+// TestLogout_RedisUnavailable_DoesNotPanic vérifie que Logout gère proprement
+// l'indisponibilité de Redis sans panique (erreur loguée, pas propagée).
+func TestLogout_RedisUnavailable_DoesNotPanic(t *testing.T) {
+	repo := &mocks.UserRepository{}
+	svc, mr := newTestService(t, repo)
+
+	jwtManager := auth.NewJWTManager("test-secret", 1, 24)
+	tokens, err := jwtManager.GenerateTokenPair(1, "user@example.com", "user")
+	require.NoError(t, err)
+
+	mr.Close() // Simule une panne Redis
+
+	assert.NotPanics(t, func() {
+		svc.Logout(context.Background(), tokens.AccessToken, tokens.RefreshToken)
+	})
 }

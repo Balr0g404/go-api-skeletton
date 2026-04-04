@@ -47,21 +47,21 @@
 
 - [x] **Sécuriser le seed admin** — passer les credentials via env vars, exécution dev-only.
 - [x] **Refuser de démarrer sans `JWT_SECRET` en prod** — valider la config au démarrage et `log.Fatal` si absent en production.
-- [ ] **Rate limiter atomique** — remplacer l'implémentation actuelle par un script Lua Redis (INCR + EXPIRE dans une seule opération atomique).
-- [ ] **Résilience Redis (SPOF)** — définir une stratégie explicite par endpoint si Redis est indisponible :
+- [x] **Rate limiter atomique** — remplacer l'implémentation actuelle par un script Lua Redis (INCR + EXPIRE dans une seule opération atomique).
+- [x] **Résilience Redis (SPOF)** — définir une stratégie explicite par endpoint si Redis est indisponible :
   - Rate limit → fall-back sur rate limiter en mémoire
   - Blacklist/logout/login → fail-closed (refuser) avec log error
   - Reset password → fail-closed
   - Ajouter des logs structurés dédiés pour chaque cas.
-- [ ] **`NewPostgres` / `NewRedis` sans `log.Fatal`** — remonter l'erreur au `main` pour un exit gracieux et contrôlé.
+- [x] **`NewPostgres` / `NewRedis` sans `log.Fatal`** — remonter l'erreur au `main` pour un exit gracieux et contrôlé.
 
 ### Haute priorité
 
 - [ ] **README : section `cmd/server/`** — la section est annoncée mais le dossier n'apparaît pas dans le repo (`.gitignore` ou oubli).
-- [ ] **Doublon email via contrainte DB** — ajouter un index unique sur `users.email` en base plutôt que de ne gérer le doublon qu'au niveau applicatif.
-- [ ] **Propager `context.Context`** — toutes les méthodes de services et repositories doivent accepter un `ctx context.Context` en premier paramètre.
-- [ ] **Logger les erreurs Redis** — toutes les opérations Redis sans check d'erreur (`Set`, `Del`, `Expire` sur blacklist) doivent logger en `warn`/`error`.
-- [ ] **Constructeurs DB/Redis retournant `error`** — remplacer `log.Fatalf` dans `NewPostgres` et `NewRedis` par un `return nil, err`.
+- [x] **Doublon email via contrainte DB** — index unique sur `users.email` + détection `pgconn.PgError` / `pgerrcode.UniqueViolation` → wrap en `gorm.ErrDuplicatedKey`.
+- [x] **Propager `context.Context`** — toutes les méthodes de services et repositories acceptent un `ctx context.Context` en premier paramètre.
+- [x] **Logger les erreurs Redis** — toutes les opérations Redis (`Set`, `Del`, `Exists` sur blacklist, reset password) loguent en `warn`/`error` via zerolog.
+- [x] **Constructeurs DB/Redis retournant `error`** — `NewPostgres` et `NewRedis` retournent `error` ; le `main` fait `log.Fatal` en cas d'échec.
 - [ ] **Architecture** — La structure du dossier internal est trop plate et perds en lisibilité. Rajouter un découpage par domaine (feature-based) auth, user et common.
 
 ### Moyenne priorité
