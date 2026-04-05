@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,7 +9,31 @@ import (
 	"github.com/Balr0g404/go-api-skeletton/internal/config"
 )
 
+// unsetenvForTest unsets an environment variable for the duration of the test
+// and restores the original value (or re-unsets it) in a Cleanup.
+func unsetenvForTest(t *testing.T, key string) {
+	t.Helper()
+	prev, exists := os.LookupEnv(key)
+	_ = os.Unsetenv(key)
+	t.Cleanup(func() {
+		if exists {
+			_ = os.Setenv(key, prev)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	})
+}
+
 func TestLoad_Defaults(t *testing.T) {
+	for _, k := range []string{
+		"APP_ENV", "APP_PORT", "CORS_ALLOWED_ORIGINS",
+		"DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME", "DB_SSLMODE",
+		"REDIS_HOST", "REDIS_PORT", "REDIS_PASSWORD", "REDIS_DB",
+		"JWT_SECRET", "JWT_EXPIRATION_HOURS", "JWT_REFRESH_EXPIRATION_HOURS",
+	} {
+		unsetenvForTest(t, k)
+	}
+
 	cfg := config.Load()
 
 	assert.Equal(t, "development", cfg.App.Env)
